@@ -7,6 +7,6 @@ import (
 
 // ScriptRunner defines the interface for executing pre-request and test scripts.
 type ScriptRunner interface {
-	Execute(script *collection.Script, env *environment.Environment) error
+	Execute(script *collection.Script, env *environment.Environment) error //takes a pointer to the script struct and a pointer to the environment struct and returns an error
 }
 
