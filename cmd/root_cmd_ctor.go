@@ -13,13 +13,11 @@ func NewRootCmd() *cobra.Command {
 		Use:   "postman-cli", //this is the name of the command that will be used to run the CLI
 		Short: "A fast, scriptable API client for the command line",
 		Long:  "postman-cli is a lightweight developer tool for running requests and debugging APIs directly from the terminal.",
-		RunE: func(cmd *cobra.Command, args []string) error { 
-			return cmd.Help()
-		}, //this is the function that will be called when the command is run for eg. when we type postman-cli in the terminal it will print the help message 
 	}
-	
+
 	c.AddCommand(NewRunCmd())
-	
+	c.AddCommand(NewSampleCmd())
+
 	return c
 }
 

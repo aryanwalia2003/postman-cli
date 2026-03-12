@@ -1,0 +1,29 @@
+{
+  "name": "Sample Collection",
+  "auth": {
+    "type": "bearer",
+    "token": "{{api_token}}"
+  },
+  "requests": [
+    {
+      "name": "Get User Profile",
+      "method": "GET",
+      "url": "{{base_url}}/get",
+      "headers": {
+        "Accept": "application/json"
+      }
+    },
+    {
+      "name": "Create Resource",
+      "method": "POST",
+      "url": "{{base_url}}/post",
+      "auth": {
+        "type": "apikey",
+        "key": "X-API-Key",
+        "value": "secret-123",
+        "in": "header"
+      },
+      "body": "{\"name\": \"test object\"}"
+    }
+  ]
+}

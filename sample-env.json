@@ -1,0 +1,7 @@
+{
+  "name": "Development",
+  "variables": {
+    "base_url": "https://httpbin.org",
+    "api_token": "your-bearer-token-here"
+  }
+}
