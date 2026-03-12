@@ -7,13 +7,14 @@ import (
 	"github.com/zhouhui8915/go-socket.io-client"
 	
 	"postman-cli/internal/collection"
+	"postman-cli/internal/errs"
 )
 
 // Execute runs the Socket.IO flow, emitting and listening to defined events.
 func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]string, events []collection.SocketIOEvent) error {
 	// We use rawURL directly now
 	if rawURL == "" {
-		return fmt.Errorf("invalid socket.io url: empty")
+		return errs.InvalidInput("invalid socket.io url: empty")
 	}
 
 	opts := &socketio_client.Options{
@@ -31,7 +32,7 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 
 	client, err := socketio_client.NewClient(rawURL, opts)
 	if err != nil {
-		return fmt.Errorf("failed to create socket.io client: %w", err)
+		return errs.Wrap(err, errs.KindInternal, "failed to create socket.io client")
 	}
 
 	expectedListeners := 0

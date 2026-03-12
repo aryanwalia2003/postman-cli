@@ -1,12 +1,12 @@
 package scripting
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/dop251/goja"
 	"postman-cli/internal/collection"
 	"postman-cli/internal/environment"
+	"postman-cli/internal/errs"
 )
 
 // Execute runs a JavaScript snippet within a fresh VM, injecting the Environment.
@@ -32,7 +32,7 @@ func (g *GojaRunner) Execute(script *collection.Script, env *environment.Environ
 	// Run the script
 	val, err := vm.RunString(scriptSource)
 	if err != nil {
-		return fmt.Errorf("script error: %w", err)
+		return errs.Wrap(err, errs.KindInternal, "script execution failed")
 	}
 
 	// Just as a placeholder to show capturing script output

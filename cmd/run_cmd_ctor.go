@@ -8,6 +8,7 @@ import (
 
 	"postman-cli/internal/runner"
 	"postman-cli/internal/storage"
+	"postman-cli/internal/errs"
 )
 
 // NewRunCmd constructs the `run` CLI command.
@@ -24,12 +25,12 @@ func NewRunCmd() *cobra.Command {
 			// Load Collection
 			collBytes, err := storage.ReadJSONFile(collectionPath)
 			if err != nil {
-				return fmt.Errorf("could not read collection file: %w", err)
+				return errs.Wrap(err, errs.KindInvalidInput, "could not read collection file")
 			}
 			
 			coll, err := storage.ParseCollection(collBytes)
 			if err != nil {
-				return fmt.Errorf("could not parse collection JSON: %w", err)
+				return errs.Wrap(err, errs.KindInvalidInput, "could not parse collection JSON")
 			}
 
 			// Init Runtime Context
@@ -39,11 +40,11 @@ func NewRunCmd() *cobra.Command {
 			if envFilePath != "" {
 				envBytes, err := storage.ReadJSONFile(envFilePath)
 				if err != nil {
-					return fmt.Errorf("could not read environment file: %w", err)
+					return errs.Wrap(err, errs.KindInvalidInput, "could not read environment file")
 				}
 				env, err := storage.ParseEnvironment(envBytes)
 				if err != nil {
-					return fmt.Errorf("could not parse environment JSON: %w", err)
+					return errs.Wrap(err, errs.KindInvalidInput, "could not parse environment JSON")
 				}
 				ctx.SetEnvironment(env)
 			}
