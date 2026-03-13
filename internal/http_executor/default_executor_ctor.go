@@ -11,7 +11,7 @@ func NewDefaultExecutor() *DefaultExecutor {
 	return &DefaultExecutor{
 		jar: jar,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 60 * time.Second,
 			Jar:     jar,
 		},
 	}

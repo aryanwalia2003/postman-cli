@@ -19,6 +19,7 @@ func NewRootCmd() *cobra.Command {
 	c.AddCommand(NewSampleCmd())
 	c.AddCommand(NewReqCmd())
 	c.AddCommand(NewSioCmd())
+	c.AddCommand(NewCollectionCmd())
 
 	return c
 }
