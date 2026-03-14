@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -20,6 +20,7 @@ func NewRunCmd() *cobra.Command {
 	var envFilePath string
 	var noCookies, clearCookies, verbose bool
 	var requestFilter string
+	var iterations int // <-- NEW: Iterations flag variable
 
 	// NEW: Variables for Temporary Request Injection
 	var injIndex string
@@ -41,6 +42,9 @@ Advanced Features:
 		Example: `  # Run everything in a collection
   postman-cli run my-api.json
   
+  # Run a collection 5 times
+  postman-cli run my-api.json -n 5
+  
   # Run with an environment file
   postman-cli run my-api.json --env prod.json
   
@@ -55,123 +59,132 @@ Advanced Features:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			collectionPath := args[0]
-
-			// 1. Load Collection from File
-			collBytes, err := storage.ReadJSONFile(collectionPath)
-			if err != nil {
-				return errs.Wrap(err, errs.KindInvalidInput, "could not read collection file")
+			
+			if iterations < 1 {
+				iterations = 1
 			}
 
-			coll, err := storage.ParseCollection(collBytes)
-			if err != nil {
-				return errs.Wrap(err, errs.KindInvalidInput, "could not parse collection JSON")
-			}
-
-			// =================================================================
-			// ▼▼▼ NEW: TEMPORARY INJECTION LOGIC ▼▼▼
-			// =================================================================
-			if injIndex != "" && injName != "" && injURL != "" {
-				idx, err := strconv.Atoi(injIndex)
-				if err != nil || idx < 1 {
-					return errs.InvalidInput("Invalid --inject-index. It must be a 1-based number.")
+			// =========================================================
+			// ▼▼▼ NEW: ITERATION LOOP STARTS HERE (OUTERMOST) ▼▼▼
+			// =========================================================
+			for i := 1; i <= iterations; i++ {
+				if iterations > 1 {
+					iterationHeader := fmt.Sprintf("  Iteration %d / %d  ", i, iterations)
+					padding := strings.Repeat("=", (70-len(iterationHeader))/2)
+					fmt.Printf("\n%s%s%s\n", padding, iterationHeader, padding)
 				}
 				
-				// Convert 1-based CLI index to 0-based slice index
-				insertPos := idx - 1
-				if insertPos > len(coll.Requests) {
-					insertPos = len(coll.Requests) // If index is too large, append to end
-				}
+				// All logic below this is now inside the iteration loop,
+				// ensuring a clean state for every run.
 
-				headerMap := make(map[string]string)
-				for _, h := range injHeaders {
-					parts := strings.SplitN(h, ":", 2)
-					if len(parts) == 2 {
-						headerMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-					}
-				}
-
-				tempReq := collection.Request{
-					Name:    color.New(color.FgHiMagenta).Sprintf("[INJECTED] %s", injName), // Highlight it!
-					Method:  strings.ToUpper(injMethod),
-					URL:     injURL,
-					Headers: headerMap,
-					Body:    injBody,
-				}
-
-				color.Magenta("💉 Injecting temporary request '%s' at position %d...\n", injName, idx)
-
-				// Insert into the slice IN-MEMORY ONLY
-				if insertPos == len(coll.Requests) {
-					coll.Requests = append(coll.Requests, tempReq)
-				} else {
-					coll.Requests = append(coll.Requests[:insertPos+1], coll.Requests[insertPos:]...)
-					coll.Requests[insertPos] = tempReq
-				}
-			} else if (injName != "" || injURL != "") && injIndex == "" {
-				color.Yellow("⚠ Warning: Ignored temporary request injection. Missing --inject-index.\n")
-			}
-			// =================================================================
-			// ▲▲▲ END INJECTION LOGIC ▲▲▲
-			// =================================================================
-
-
-			// 2. Filter requests if --request is provided
-			if requestFilter != "" {
-				filtered := []collection.Request{}
-				for _, r := range coll.Requests {
-					if strings.Contains(strings.ToLower(r.Name), strings.ToLower(requestFilter)) {
-						filtered = append(filtered, r)
-					}
-				}
-				if len(filtered) == 0 {
-					return errs.InvalidInput(fmt.Sprintf("No requests found matching: %s", requestFilter))
-				}
-				coll.Requests = filtered
-				color.Cyan("🔍 Filtered collection to %d request(s) matching '%s'\n", len(filtered), requestFilter)
-			}
-
-			// 3. Init Runtime Context
-			ctx := runner.NewRuntimeContext()
-
-			// 3. Load Environment if provided
-			if envFilePath != "" {
-				envBytes, err := storage.ReadJSONFile(envFilePath)
+				// 1. Load Collection from File
+				collBytes, err := storage.ReadJSONFile(collectionPath)
 				if err != nil {
-					return errs.Wrap(err, errs.KindInvalidInput, "could not read environment file")
+					return errs.Wrap(err, errs.KindInvalidInput, "could not read collection file")
 				}
-				env, err := storage.ParseEnvironment(envBytes)
+
+				coll, err := storage.ParseCollection(collBytes)
 				if err != nil {
-					return errs.Wrap(err, errs.KindInvalidInput, "could not parse environment JSON")
+					return errs.Wrap(err, errs.KindInvalidInput, "could not parse collection JSON")
 				}
-				ctx.SetEnvironment(env)
-			}
 
-			// 4. Build executor with cookie jar wired in
-			exec := http_executor.NewDefaultExecutor()
-			if noCookies {
-				exec.DisableCookies()
-			}
+				// Injection Logic
+				if injIndex != "" && injName != "" && injURL != "" {
+					idx, err := strconv.Atoi(injIndex)
+					if err != nil || idx < 1 { return errs.InvalidInput("Invalid --inject-index.") }
+					insertPos := idx - 1
+					if insertPos > len(coll.Requests) { insertPos = len(coll.Requests) }
+					headerMap := make(map[string]string)
+					for _, h := range injHeaders {
+						parts := strings.SplitN(h, ":", 2)
+						if len(parts) == 2 {
+							headerMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+						}
+					}
+					tempReq := collection.Request{
+						Name:    color.New(color.FgHiMagenta).Sprintf("[INJECTED] %s", injName),
+						Method:  strings.ToUpper(injMethod),
+						URL:     injURL,
+						Headers: headerMap,
+						Body:    injBody,
+					}
+					color.Magenta("💉 Injecting temporary request '%s' at position %d...\n", injName, idx)
+					if insertPos == len(coll.Requests) {
+						coll.Requests = append(coll.Requests, tempReq)
+					} else {
+						coll.Requests = append(coll.Requests[:insertPos+1], coll.Requests[insertPos:]...)
+						coll.Requests[insertPos] = tempReq
+					}
+				} else if (injName != "" || injURL != "") && injIndex == "" {
+					color.Yellow("⚠ Warning: Ignored temporary request injection. Missing --inject-index.\n")
+				}
 
-			// 5. Run Collection
-			engine := runner.NewCollectionRunner(exec, nil, nil)
-			if clearCookies {
-				engine.SetClearCookiesPerRequest(true)
-			}
-			if verbose {
-				engine.SetVerbose(true)
-			}
+				// Filtering Logic
+				if requestFilter != "" {
+					filtered := []collection.Request{}
+					for _, r := range coll.Requests {
+						if strings.Contains(strings.ToLower(r.Name), strings.ToLower(requestFilter)) {
+							filtered = append(filtered, r)
+						}
+					}
+					if len(filtered) == 0 {
+						color.Yellow("⚠ No requests found matching filter: %s", requestFilter)
+						continue // Skip this iteration if filter matches nothing
+					}
+					coll.Requests = filtered
+					color.Cyan("🔍 Filtered collection to %d request(s) matching '%s'\n", len(filtered), requestFilter)
+				}
 
-			err = engine.Run(coll, ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "\nExecution Failed: %v\n", err)
-				os.Exit(1)
-			}
+				// A fresh context for each iteration is crucial!
+				ctx := runner.NewRuntimeContext()
+
+				// Load Environment
+				if envFilePath != "" {
+					envBytes, err := storage.ReadJSONFile(envFilePath)
+					if err != nil {
+						return errs.Wrap(err, errs.KindInvalidInput, "could not read environment file")
+					}
+					env, err := storage.ParseEnvironment(envBytes)
+					if err != nil {
+						return errs.Wrap(err, errs.KindInvalidInput, "could not parse environment JSON")
+					}
+					ctx.SetEnvironment(env)
+				}
+
+				// Build executor
+				exec := http_executor.NewDefaultExecutor()
+				if noCookies {
+					exec.DisableCookies()
+				}
+
+				// Run Collection for this iteration
+				engine := runner.NewCollectionRunner(exec, nil, nil)
+				if clearCookies {
+					engine.SetClearCookiesPerRequest(true)
+				}
+				if verbose {
+					engine.SetVerbose(true)
+				}
+
+				err = engine.Run(coll, ctx)
+				if err != nil {
+					color.Red("Iteration %d failed with error: %v\n", i, err)
+					// We continue to the next iteration even on failure
+				}
+
+				// Add a small delay between iterations
+				if i < iterations {
+					fmt.Println("\nWaiting 1 second before next iteration...")
+					time.Sleep(1 * time.Second)
+				}
+			} // <-- ITERATION LOOP ENDS HERE
 
 			return nil
 		},
 	}
 
 	// Standard Flags
+	c.Flags().IntVarP(&iterations, "iterations", "n", 1, "Number of times to run the collection") // <-- NEW FLAG
 	c.Flags().StringVarP(&envFilePath, "env", "e", "", "Path to the environment JSON file")
 	c.Flags().BoolVar(&noCookies, "no-cookies", false, "Disable cookie persistence for this run")
 	c.Flags().BoolVar(&clearCookies, "clear-cookies", false, "Clear cookie jar before each request")
