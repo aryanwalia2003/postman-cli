@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"time"
 
 	"postman-cli/internal/collection"
 	"postman-cli/internal/http_executor"
@@ -26,6 +27,26 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext) error {
 	verboseColor := color.New(color.FgYellow)
 
+	// =======================================================
+	// THE KILL SWITCH
+	// =======================================================
+	// Create a channel that will be used to signal all background sockets to stop
+	stopAsyncSockets := make(chan struct{})
+
+	// Defer ensures this block runs at the VERY END of the execution, 
+	// no matter if the loop finishes normally or crashes.
+	defer func() {
+		fmt.Println("\n🏁 Collection execution finished.")
+		fmt.Println("⏳ Waiting 3 seconds for any final trailing socket events...")
+		time.Sleep(3 * time.Second)
+		
+		// This broadcasts a signal to ALL running background sockets to close
+		close(stopAsyncSockets)
+		
+		// Wait a tiny bit for logs to flush before the terminal completely exits
+		time.Sleep(500 * time.Millisecond) 
+	}()
+
 	for _, req := range coll.Requests {
 		fmt.Printf("\n▶ Running request: %s\n", req.Name)
 
@@ -38,7 +59,7 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 				headers[k] = cr.replaceVars(v, ctx)
 			}
 
-			// 1. Pehle saare events ko resolve karke slice mein daal lo
+			// 1. Resolve events
 			var resolvedEvents []collection.SocketIOEvent
 			for _, ev := range req.Events {
 				resolvedEvents = append(resolvedEvents, collection.SocketIOEvent{
@@ -48,38 +69,41 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 				})
 			}
 
-			// 2. Ab check karo ki Async chalana hai ya Sync
+			// 2. Check if Async or Sync
 			if req.Async {
 				fmt.Printf("Starting Background Socket.IO connection for '%s'...\n", req.Name)
+				
+				// Channel to synchronize connection phase
+				readyChan := make(chan error, 1)
 
-				readyChan :=make(chan error,1)
-
-				// Background mein execute karo
+				// Background execution
 				go func(name, url string, hdrs map[string]string, events []collection.SocketIOEvent) {
-					err := cr.sioExecutor.Execute(url, hdrs, events,readyChan)
+					// IMPORTANT: Pass both readyChan and stopAsyncSockets here!
+					err := cr.sioExecutor.Execute(url, hdrs, events, readyChan, stopAsyncSockets)
 					if err != nil {
-						color.Red("\n[BACKGROUND ERROR] Socket.IO '%s' failed: %v\n> ", name, err)
+						color.Red("\n[BACKGROUND ERROR] Socket.IO '%s' failed: %v\n", name, err)
 					} else {
-						color.Green("\n[BACKGROUND SUCCESS] Socket.IO '%s' completed.\n> ", name)
+						color.Green("\n[BACKGROUND SUCCESS] Socket.IO '%s' completed.\n", name)
 					}
 				}(req.Name, urlStr, headers, resolvedEvents)
 
-				color.Cyan("Waiting for socketio to establish connection ...\n")
+				// Wait for the exact moment the socket connects
+				color.Cyan("⏳ Waiting for socket to establish connection...\n")
+				err := <-readyChan // BLOCKS here until the background thread sends a signal
 
-				err:= <-readyChan
-				
-				if err!=nil{
-					color.Yellow("Background Socket failised to connect : %v. Continuing anyway ... \n",err)
-				}else{
-					color.Green("Background Socket is ready and listing ! \n")
+				if err != nil {
+					color.Yellow("⚠ Background Socket failed to connect: %v. Continuing collection anyway...\n", err)
+				} else {
+					color.Green("✔ Background Socket is ready and listening continuously!\n")
 				}
 
-				// Async hai, isliye turant agle request par badh jao (bina block kiye)
+				// Move to next request immediately
 				cr.runScripts("test", req.Scripts, ctx, nil)
 				continue
 
 			} else {
-				err := cr.sioExecutor.Execute(urlStr, headers, resolvedEvents,nil)
+				// Synchronous execution (Pass nil for readyChan and stopChan as we don't need mid-flight sync or infinite wait)
+				err := cr.sioExecutor.Execute(urlStr, headers, resolvedEvents, nil, nil)
 				if err != nil {
 					fmt.Printf("Socket.IO Request %s failed: %v\n", req.Name, err)
 				} else {
@@ -250,5 +274,3 @@ func isNoisyHeader(header string) bool {
 	}
 	return noisy[http.CanonicalHeaderKey(header)]
 }
-
-

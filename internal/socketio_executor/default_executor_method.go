@@ -16,14 +16,20 @@ import (
 )
 
 // Execute runs the Socket.IO flow, emitting and listening to defined events using raw V4 WebSockets.
-func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]string, events []collection.SocketIOEvent,readyChan chan error) error {
+func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]string, events []collection.SocketIOEvent, readyChan chan error, stopChan chan struct{}) error {
 	if rawURL == "" {
+		if readyChan != nil {
+			readyChan <- errs.InvalidInput("invalid socket.io url: empty")
+		}
 		return errs.InvalidInput("invalid socket.io url: empty")
 	}
 
 	// 1. Format URL for WebSocket and Engine.IO v4
 	u, err := url.Parse(rawURL)
 	if err != nil {
+		if readyChan != nil {
+			readyChan <- errs.Wrap(err, errs.KindInvalidInput, "Invalid URL format")
+		}
 		return errs.Wrap(err, errs.KindInvalidInput, "Invalid URL format")
 	}
 	if u.Scheme == "http" {
@@ -52,9 +58,8 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	dialer := websocket.DefaultDialer
 	conn, _, err := dialer.Dial(u.String(), reqHeaders)
 	if err != nil {
-
 		if readyChan != nil {
-			readyChan <- errs.Wrap(err,errs.KindInternal,"Failed to connect to websocket")
+			readyChan <- errs.Wrap(err, errs.KindInternal, "Failed to connect to websocket")
 		}
 		return errs.Wrap(err, errs.KindInternal, "Failed to connect to websocket")
 	}
@@ -110,24 +115,36 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 				if json.Unmarshal([]byte(dataStr), &arr) == nil && len(arr) > 0 {
 					if eventName, ok := arr[0].(string); ok {
 						mu.Lock()
-						needed := listenTargets[eventName]
-						if needed > 0 {
-							listenTargets[eventName]--
-							expectedListeners--
+						isListening := false
 
+						for _, ev := range events {
+							if ev.Type == "listen" && ev.Name == eventName {
+								isListening = true
+								break
+							}
+						}
+
+						if isListening {
 							payload := ""
+
 							if len(arr) > 1 {
-								payloadBytes, _ := json.Marshal(arr[1])
-								payload = string(payloadBytes)
+								pb, _ := json.Marshal(arr[1])
+								payload = string(pb)
 							}
 							fmt.Printf("\n[RECEIVED] Event: '%s' | Data: %v\n", eventName, payload)
 
-							// If all expected events are received, close the done channel
-							if expectedListeners == 0 {
-								select {
-								case <-done:
-								default:
-									close(done)
+							// Only decrement and track target counts if we are in Synchronous mode
+							if stopChan == nil {
+								if needed := listenTargets[eventName]; needed > 0 {
+									listenTargets[eventName]--
+									expectedListeners--
+									if expectedListeners == 0 {
+										select {
+										case <-done:
+										default:
+											close(done)
+										}
+									}
 								}
 							}
 						}
@@ -170,7 +187,18 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 		}
 	}
 
-	// 7. Wait for expected listeners to trigger
+	// ========================================================
+	// 7. WAIT LOGIC (Async vs Sync)
+	// ========================================================
+	
+	// ASYNC MODE: Wait indefinitely until Runner sends stop signal
+	if stopChan != nil {
+		<-stopChan
+		fmt.Println("\nClosing Background Socket.IO connection...")
+		return nil
+	}
+
+	// SYNC MODE: Wait for specific events to arrive
 	if expectedListeners > 0 {
 		fmt.Printf("Waiting up to %v for expected listener(s)...\n", e.timeout)
 		select {
