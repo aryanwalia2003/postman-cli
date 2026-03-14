@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"postman-cli/internal/collection"
-	"postman-cli/internal/http_executor"
-	"postman-cli/internal/scripting"
+	"reqx/internal/collection"
+	"reqx/internal/http_executor"
+	"reqx/internal/scripting"
 
 	"github.com/fatih/color"
 )

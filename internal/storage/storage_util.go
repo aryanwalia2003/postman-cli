@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 )
 
-// GetDefaultConfigDir returns the default ~/.postman-cli/ directory.
+// GetDefaultConfigDir returns the default ~/.reqx/ directory.
 func GetDefaultConfigDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

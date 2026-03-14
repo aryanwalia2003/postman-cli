@@ -1,6 +1,6 @@
 package runner
 
-import "postman-cli/internal/environment"
+import "reqx/internal/environment"
 
 // RuntimeContext holds state and variables during execution.
 type RuntimeContext struct {

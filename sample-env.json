@@ -1,7 +1,10 @@
 {
-  "name": "Development",
+  "name": "Example Environment",
   "variables": {
     "base_url": "https://httpbin.org",
-    "api_token": "your-bearer-token-here"
+    "api_token": "your-secret-token",
+    "admin_password": "super-secret-password",
+    "custom_note": "Request sent via ReqX",
+    "session_id": "sess-99b32"
   }
 }

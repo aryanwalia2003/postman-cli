@@ -1,6 +1,6 @@
 package socketio_executor
 
-import "postman-cli/internal/collection"
+import "reqx/internal/collection"
 
 // SocketIOExecutor defines the interface for executing Socket.IO request flows.
 type SocketIOExecutor interface {

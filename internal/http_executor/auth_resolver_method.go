@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"postman-cli/internal/collection"
+	"reqx/internal/collection"
 )
 
 // ApplyAuth injects authentication headers/params into the HTTP request.

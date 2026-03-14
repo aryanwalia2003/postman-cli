@@ -7,11 +7,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"postman-cli/internal/collection"
-	"postman-cli/internal/errs"
-	"postman-cli/internal/http_executor"
-	"postman-cli/internal/runner"
-	"postman-cli/internal/storage"
+	"reqx/internal/collection"
+	"reqx/internal/errs"
+	"reqx/internal/http_executor"
+	"reqx/internal/runner"
+	"reqx/internal/storage"
 )
 
 // NewReqCmd constructs the `req` CLI command for single requests.
@@ -25,17 +25,22 @@ func NewReqCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "req [url]",
 		Short: "Send a single quick HTTP request (curl style)",
-		Long: `🚀 Send a standalone HTTP request without needing a collection file.
-This command is perfect for quick API testing. It supports the same 
-environment variable injection and verbose output as the 'run' command.`,
-		Example: `  # Basic GET
-  postman-cli req https://api.github.com/users/octocat
+		Long: `🚀 Execute a standalone HTTP request instantly.
+No collection file required. 'req' is designed for speed—giving you a 
+curl-like experience but with the added power of variables, environment 
+injection, and formatted output.
+
+Perfect for:
+- Testing a single endpoint before adding it to a collection.
+- Quick debugging of external APIs using predefined environmental secrets.`,
+		Example: `  # 📡 Simple GET request
+  reqx req https://api.github.com/users/aryanwalia2003
   
-  # POST with body and headers
-  postman-cli req http://localhost:8080/login \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d '{"user":"admin"}'`,
+  # 🔐 POST with body and variables from an environment file
+  reqx req "{{base_url}}/auth/login" -e prod.json -X POST -d '{"user":"test"}'
+  
+  # 🛠 Adding custom headers and using verbose output
+  reqx req http://localhost:8080/api -H "Authorization: Bearer my-token" -v`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetURL := args[0]

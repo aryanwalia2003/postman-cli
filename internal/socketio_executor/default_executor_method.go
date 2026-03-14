@@ -11,8 +11,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"postman-cli/internal/collection"
-	"postman-cli/internal/errs"
+	"reqx/internal/collection"
+	"reqx/internal/errs"
 )
 
 // Execute runs the Socket.IO flow, emitting and listening to defined events using raw V4 WebSockets.

@@ -9,11 +9,11 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"postman-cli/internal/collection"
-	"postman-cli/internal/errs"
-	"postman-cli/internal/http_executor"
-	"postman-cli/internal/runner"
-	"postman-cli/internal/storage"
+	"reqx/internal/collection"
+	"reqx/internal/errs"
+	"reqx/internal/http_executor"
+	"reqx/internal/runner"
+	"reqx/internal/storage"
 )
 
 func NewRunCmd() *cobra.Command {
@@ -30,32 +30,32 @@ func NewRunCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "run [collection.json]",
 		Short: "Execute a collection of requests",
-		Long: `🏃 Execute all or specific requests from a collection file.
-This command parses the provided JSON collection and runs each request sequentially.
-It supports environment variable substitution, cookie persistence, and real-time scripting.
+		Long: `🏃 Parse and execute a .json collection file sequentially.
+The 'run' command is the heart of ReqX. It handles variable replacement, 
+cookie persistence, pre-request scripts, and test assertions.
 
-Advanced Features:
-1. Substring Filtering: Use --request to run only a subset of requests.
-2. In-Memory Injection: Use the --inject flags to temporarily add a request 
-   at a specific position without modifying the source JSON file. 
-   This is perfect for adding a 'setup' or 'cleanup' task for a single run.`,
-		Example: `  # Run everything in a collection
-  postman-cli run my-api.json
+🛠 Advanced Flow Control:
+1. Multi-Iteration (-n): Run the entire collection multiple times for load testing.
+2. Filtering (-f): Execute only requests whose names match a specific substring.
+3. Injection: Temporarily insert a brand-new request (like a one-time auth setup) 
+   at a specific position without modifying your source collection file.`,
+		Example: `  # Standard execution with environment
+  reqx run my-collection.json -e dev-env.json
   
-  # Run a collection 5 times
-  postman-cli run my-api.json -n 5
+  # Load Testing: Run 20 iterations and view aggregated stats
+  reqx run my-collection.json -n 20
   
-  # Run with an environment file
-  postman-cli run my-api.json --env prod.json
+  # Targeted Testing: Run only requests with "User" in the name
+  reqx run my-collection.json -f "User"
   
-  # Run only requests containing "Login" or "Auth"
-  postman-cli run my-api.json -f "Login"
+  # Debugging: Verbose output showing full request and response bodies
+  reqx run my-collection.json -v
   
-  # Inject a temporary 'Health Check' at the start (index 1)
-  postman-cli run my-api.json --inject-index 1 --inject-name "Health" --inject-url "http://api/health"
+  # Custom Injection: Add a setup request at the very beginning (index 1)
+  reqx run my-api.json --inject-index 1 --inject-name "Auth Setup" --inject-url "http://api.com/auth"
   
-  # Disable cookies for a stateless run
-  postman-cli run my-api.json --no-cookies`,
+  # Stateless: Disable cookie persistence for a clean run
+  reqx run my-api.json --no-cookies`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			collectionPath := args[0]

@@ -2,7 +2,7 @@ package storage
 
 import (
 	"encoding/json"
-	"postman-cli/internal/environment"
+	"reqx/internal/environment"
 )
 
 // ParseEnvironment takes raw JSON bytes and returns a parsed Environment.

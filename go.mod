@@ -1,4 +1,4 @@
-module postman-cli
+module reqx
 
 go 1.25.0
 

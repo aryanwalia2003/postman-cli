@@ -1,6 +1,6 @@
 package runner
 
-import "postman-cli/internal/environment"
+import "reqx/internal/environment"
 
 // SetGlobalVariable sets a variable in the global context.
 func (rc *RuntimeContext) SetGlobalVariable(key string, value interface{}) {

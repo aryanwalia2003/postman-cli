@@ -1,111 +1,122 @@
-# 🚀 Postman CLI
+# 🚀 ReqX: High-Performance, Scriptable API Client
 
-A high-performance, scriptable API client for the terminal. Built in Go for speed, designed for developer productivity.
-
-This tool acts as a lightweight, command-line alternative to UI-heavy applications like Postman. It's perfect for automating complex API test flows, debugging real-time services, and managing collections directly from your terminal.
-
-## ✨ Features
-
-- **HTTP & Socket.IO v4:** First-class support for both standard REST APIs and real-time Socket.IO v4 connections.
-- **Stateful Collections:** Run sequential requests where variables (like auth tokens) from one request are used in the next.
-- **Async Socket Testing:** Test complex, event-driven flows by running background socket listeners alongside HTTP requests.
-- **Powerful Scripting:** Use Postman-style JavaScript (`pm.env.set`, `pm.response.json`) to write tests and handle dynamic data.
-- **Advanced Flow Control:** Run collections in multiple iterations (`-n`), filter specific requests (`-f`), and temporarily inject new requests on the fly.
-- **Full-featured CLI:** Includes a curl-like `req` command, an interactive `sio` REPL, and a `collection` manager to edit files without a GUI.
+**ReqX** is a lightweight, terminal-centric API execution engine built in Go. It is designed for developers who value speed, automation, and a clean CLI experience. ReqX allows you to run Postman-style collections, debug real-time Socket.IO streams, and automate complex test flows without ever leaving your terminal.
 
 ---
 
-## 💻 Installation (Windows)
+## ⚡ Quick Install (Windows)
 
-1.  Make sure you have `postman-cli.exe` and `install.ps1` in the same directory.
-2.  Right-click on your **PowerShell** icon and select **"Run as Administrator"**.
-3.  Navigate to the directory containing the script.
-4.  Run the installer:
-    ```powershell
-    Set-ExecutionPolicy Unrestricted -Scope Process
-    .\install.ps1
-    ```
-5.  **Restart any open terminals** (this is critical!).
-6.  Verify the installation by typing `postman-cli --help` in your new terminal window.
-
----
-
-## 📚 Core Commands
-
-### `run`: Execute a Collection
-The main command for running a full test suite.
-
-```bash
-# Basic run with an environment file
-postman-cli run vuc-collection.json -e vuc-env.json
-
-# Run 10 times with verbose output and no cookies
-postman-cli run vuc-collection.json -e vuc-env.json -n 10 -v --no-cookies
-
-# Run only requests with "Login" in their name
-postman-cli run vuc-collection.json -f "Login"
-```
-
-### `req`: Send a Single Request
-A powerful, curl-like command for quick, ad-hoc API calls.
-
-```bash
-# Simple GET request
-postman-cli req https://httpbin.org/get
-
-# POST request with a body and variables from an env file
-postman-cli req "{{base_url}}/auth/login" -e vuc-env.json -X POST -d '{"user":"test"}'
-```
-
-### `sio`: Interactive Socket.IO REPL
-Connect to a Socket.IO v4 server and debug events in real-time.
-
-```bash
-# Connect with an auth cookie
-postman-cli sio http://localhost:7879 -H "Cookie: auth-token={{token}}"
-
-# Once inside the REPL:
-> listen NEW_DISPATCH
-> emit APPOINTMENT_TAKEN {"id": 123}
-```
-
-### `collection`: Manage Your JSON Files
-Edit your collections without opening a text editor.
-
-```bash
-# List all requests with their index numbers
-postman-cli collection list vuc-collection.json
-
-# Add a new request to the end of the file
-postman-cli collection add vuc-collection.json -n "Health Check" -u "{{base_url}}/health"
-
-# Move request #5 to the #2 position
-postman-cli collection move vuc-collection.json 5 2
+Open PowerShell as **Administrator** and run this one-liner to download and install the latest version:
+```powershell
+iwr -useb https://raw.githubusercontent.com/aryanwalia2003/reqx/main/install.ps1 | iex
 ```
 
 ---
 
-## 🧬 Advanced: Async Socket Testing
+## ✨ Features at a Glance
 
-To test flows where a user (e.g., a Doctor) listens for events triggered by another user (e.g., a Receptionist), you can start a socket connection in the background using `"async": true`.
+- **🚀 Blazing Fast**: Built in Go for near-instant execution of large test suites.
+- **📡 Protocol Support**: Full HTTP/HTTPS support and interactive Socket.IO v4 REPL.
+- **🔐 Stateful Flows**: Automatically handles environment variables and cookie persistence between requests.
+- **📜 JS Scripting**: Use Postman-style JavaScript (`pm.env.set`, `pm.test`) for advanced test logic.
+- **🔄 Multi-Iteration**: Run load tests with a single command and view aggregated performance summaries.
+- **📂 GUI-Free Management**: Add, move, or list requests in your collections directly via the CLI.
+- **🛠 Zero Dependencies**: A single binary that works right out of the box.
 
-**Example `collection.json`:**
-```json
-"requests": [
-  {
-    "name": "Doctor Connects and Listens (Async)",
-    "protocol": "SOCKETIO",
-    "async": true,
-    "url": "{{socket_base_url}}",
-    "headers": { "Cookie": "auth-token={{doctor_token}}" },
-    "events": [{ "type": "listen", "name": "NEW_DISPATCH" }]
-  },
-  {
-    "name": "Receptionist Broadcasts (HTTP)",
-    "method": "POST",
-    "url": "{{base_url}}/appointments/broadcast",
-    "auth": { "type": "bearer", "token": "{{receptionist_token}}" }
-  }
-]
+---
+
+## 📚 Core Command Guide
+
+### 1. `run`: The Execution Engine
+Execute full collections with variables, cookies, and iterations.
+
+```bash
+# Basic run with environment
+reqx run collection.json -e dev.json
+
+# Performance Test: 10 iterations with aggregated summary
+reqx run collection.json -n 10
+
+# Targeted Run: Only requests containing "Auth"
+reqx run collection.json -f "Auth"
+
+# Verbose Mode: See full request/response headers and bodies
+reqx run collection.json -v
 ```
-When you run this, the Doctor socket will connect and wait. The CLI will *immediately* proceed to the next request, allowing the Receptionist to trigger the `NEW_DISPATCH` event, which will be caught by the background socket.
+
+### 2. `req`: The Quick Requester
+For ad-hoc, curl-style calls with the power of ReqX variables.
+
+```bash
+# Simple GET
+reqx req https://api.github.com/users/aryanwalia2003
+
+# POST with JSON body and environment secrets
+reqx req "{{base_url}}/login" -e prod.json -X POST -d '{"user":"test"}'
+```
+
+### 3. `sio`: The Socket.IO REPL
+Debug real-time streams interactively.
+
+```bash
+# Connect with a session cookie
+reqx sio http://localhost:7879 -H "Cookie: auth={{token}}"
+
+# Inside the REPL:
+> listen NEW_MESSAGE
+> emit send_chat {"text": "hello"}
+> exit
+```
+
+### 4. `collection`: The CLI Editor
+Modify your .json test suites without opening a text editor.
+
+```bash
+# See request indices
+reqx collection list api.json
+
+# Add a health check
+reqx collection add api.json -n "Health" -u "{{base_url}}/health"
+
+# Move request #10 to position #2
+reqx collection move api.json 10 2
+```
+
+---
+
+## 🧬 Advanced Usage & Samples
+
+To see the full power of ReqX, generate the high-depth sample files:
+```bash
+reqx sample
+```
+
+### `sample-collection.json` Deep-Dive
+This generated file demonstrates:
+- **Variable Injection**: `{{$timestamp}}` for unique IDs and `{{api_token}}` for dynamic auth.
+- **Auth Inheritance**: Collection-level auth applied to all requests unless overridden.
+- **JavaScript Testing**:
+  ```javascript
+  pm.test("Status is 200", () => pm.response.to.have.status(200));
+  pm.env.set("last_id", pm.response.json().id);
+  ```
+- **Async Sockets**: Start a background listener in your collection that stays alive while subsequent HTTP requests are fired.
+
+---
+
+## 🛠 Manual Installation (Windows)
+
+1. Download the latest `reqx.exe` and `install.ps1` from the **Releases** page.
+2. Open PowerShell as **Administrator**.
+3. Run the installer:
+   ```powershell
+   .\install.ps1
+   ```
+4. **Restart your terminal** and type `reqx --help`.
+
+---
+
+## 🤝 Contributing
+ReqX is built with a focus on **Consistency** and **Velocity**. If you're contributing, please follow the documentation patterns established in the `docs/` folder.
+
+*Developed by Aryan Walia | 2026*

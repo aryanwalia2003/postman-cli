@@ -1,9 +1,9 @@
 package runner
 
 import (
-	"postman-cli/internal/http_executor"
-	"postman-cli/internal/scripting"
-	"postman-cli/internal/socketio_executor"
+	"reqx/internal/http_executor"
+	"reqx/internal/scripting"
+	"reqx/internal/socketio_executor"
 	"time"
 )
 

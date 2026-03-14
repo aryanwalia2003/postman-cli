@@ -1,7 +1,7 @@
 package main
 
 import (
-	"postman-cli/cmd"
+	"reqx/cmd"
 )
 
 func main() {

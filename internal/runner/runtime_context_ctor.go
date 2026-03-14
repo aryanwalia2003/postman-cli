@@ -1,6 +1,6 @@
 package runner
 
-import "postman-cli/internal/environment"
+import "reqx/internal/environment"
 
 // NewRuntimeContext constructs a new RuntimeContext.
 func NewRuntimeContext() *RuntimeContext {

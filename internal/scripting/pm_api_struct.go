@@ -1,7 +1,7 @@
 package scripting
 
 import (
-	"postman-cli/internal/environment"
+	"reqx/internal/environment"
 )
 
 // Yeh basically postman ka pm object hai , yeh apne andar enviroment rakhta hai

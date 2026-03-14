@@ -10,27 +10,34 @@ import (
 // NewRootCmd constructs the base CLI command.
 func NewRootCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "postman-cli", //this is the name of the command that will be used to run the CLI
+		Use:   "reqx", 
 		Short: "A fast, scriptable API client for the terminal",
-		Long: `🚀 postman-cli: A high-performance, developer-first API client.
-Built for speed and simplicity, it allows you to run Postman-style collections, 
-individual requests, and Socket.IO events directly from your command line.
+		Long: `🚀 ReqX: The high-performance, developer-first API client.
+Built for speed and automation, ReqX allows you to run Postman-style collections, 
+individual HTTP requests, and interactive Socket.IO events directly from your 
+terminal. It is a powerful, lightweight alternative for teams that value 
+terminal-centric workflows and fast execution.
 
-Key Features:
-- Run collections with environment-based variable injection
-- Permanent collection management (add, move, list requests)
-- Real-time Socket.IO event testing
-- JavaScript scripting for pre-request logic and test assertions
-- Temporary request injection during test runs`,
-		Example: `  # Run a collection
-  postman-cli run collection.json -e env.json
+⚡ Key Capabilities:
+- Stateful Collections: Use environment variables to pass data between requests.
+- Advanced Scripting: JavaScript-based tests and pre-request logic (Goja engine).
+- Real-time Debugging: First-class support for Socket.IO v4 with async listeners.
+- Performance Ready: Built-in support for multi-iteration runs and aggregated summaries.
+- Zero GUI Required: Manage collection files entirely via the 'collection' command.`,
+		Example: `  # 📡 RUN a collection with environment variables
+  reqx run vuc-collection.json -e prod-env.json
   
-  # Run a specific request from a collection
-  postman-cli run collection.json -f "Login"
+  # 🚀 PERFORMANCE test with 10 iterations and aggregated summary
+  reqx run vuc-collection.json -n 10
   
-  # Manage your collection file
-  postman-cli collection list my-api.json
-  postman-cli collection add my-api.json -n "New Req" -u "http://api.com/get"`,
+  # 🔍 FILTER to run only the "Login" request
+  reqx run vuc-collection.json -f "Login"
+  
+  # 💡 Ad-hoc HTTP request (curl style)
+  reqx req https://api.github.com/users/aryanwalia2003
+  
+  # 📂 MANAGE collection content without opening an editor
+  reqx collection add my-api.json -n "Health Check" -u "{{base_url}}/health"`,
 	}
 
 	c.AddCommand(NewRunCmd())

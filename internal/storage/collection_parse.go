@@ -2,7 +2,7 @@ package storage
 
 import (
 	"encoding/json"
-	"postman-cli/internal/collection"
+	"reqx/internal/collection"
 )
 
 // ParseCollection takes raw JSON bytes and returns a parsed Collection.

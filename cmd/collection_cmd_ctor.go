@@ -9,9 +9,9 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"postman-cli/internal/collection"
-	"postman-cli/internal/errs"
-	"postman-cli/internal/storage"
+	"reqx/internal/collection"
+	"reqx/internal/errs"
+	"reqx/internal/storage"
 )
 
 // NewCollectionCmd creates the base `collection` command
@@ -21,17 +21,22 @@ func NewCollectionCmd() *cobra.Command {
 		Aliases: []string{"coll"},
 		Short:   "Manage requests inside a collection JSON file",
 		Long: `📂 View, add, or reorder requests permanently within a collection file.
-Unlike the 'run' command (which works in-memory), these commands modify the 
-underlying .json file. This allows you to build and maintain your API collections 
-entirely from the command line without opening an editor.`,
-		Example: `  # List all requests to see their order
-  postman-cli collection list my-api.json
+Unlike the 'run' command (which works in-memory), these commands perform 
+direct file mutations. This allows you to build, maintain, and structure 
+your test suites purely from the terminal.
+
+It eliminates the need to manually edit complex JSON files or open the GUI.`,
+		Example: `  # 📋 LIST all requests to see their execution order & indices
+  reqx collection list vuc-collection.json
   
-  # Add a new GET request
-  postman-cli collection add my-api.json -n "Get Profile" -u "{{base_url}}/me"
+  # ➕ ADD a new GET request at the end of the collection
+  reqx collection add vuc-collection.json -n "Get Profile" -u "{{base_url}}/me"
   
-  # Reorder requests
-  postman-cli collection move my-api.json 5 1`,
+  # ➕ ADD a POST request with headers
+  reqx collection add vuc-collection.json -X POST -n "Login" -u "{{base_url}}/auth" -H "Content-Type: application/json"
+  
+  # 🔢 MOVE request #5 to become the first request (index 1)
+  reqx collection move vuc-collection.json 5 1`,
 	}
 
 	cmd.AddCommand(newListCmd())

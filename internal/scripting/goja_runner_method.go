@@ -6,9 +6,9 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/fatih/color"
-	"postman-cli/internal/collection"
-	"postman-cli/internal/environment"
-	"postman-cli/internal/errs"
+	"reqx/internal/collection"
+	"reqx/internal/environment"
+	"reqx/internal/errs"
 )
 
 // Execute runs a JavaScript snippet within a fresh VM, injecting the Environment and optional Response.

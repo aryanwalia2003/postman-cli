@@ -1,34 +1,35 @@
-$installDir = join-path $env:LOCALAPPDATA "postman-cli"
-$exeName = "postman-cli.exe"
-$sourceExe = join-path $PSScriptRoot $exeName
+$exeName = "reqx.exe"
+$destDir = "$env:USERPROFILE\.reqx\bin"
+$configDir = "$env:USERPROFILE\.reqx"
 
-# 1. Create install directory if it doesn't exist
-if (-not (test-path $installDir)) {
-    write-host "[INFO] Creating installation directory: $installDir" -foregroundColor Cyan
-    new-item -path $installDir -itemType Directory | out-null
+Write-Host "--- ReqX Installer ---" -foregroundColor Cyan
+
+# 1. Create Directories
+if (-not (Test-Path $destDir)) {
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    Write-Host "Created bin directory: $destDir"
 }
 
-# 2. Check if source EXE exists
-if (test-path $sourceExe) {
-    write-host "[COPY] Copying $exeName to $installDir..." -foregroundColor Cyan
-    copy-item -path $sourceExe -destination $installDir -force
+# 2. Copy Executable
+if (Test-Path $exeName) {
+    Copy-Item -Path $exeName -Destination "$destDir\$exeName" -Force
+    Write-Host "Copied $exeName to $destDir" -foregroundColor Green
 } else {
-    write-host "[ERROR] $exeName not found in the current directory!" -foregroundColor Red
-    write-host "Please ensure you have extracted all files from the zip." -foregroundColor Yellow
+    Write-Host "Error: $exeName not found in current directory!" -foregroundColor Red
     exit 1
 }
 
-# 3. Add to PATH if not already there
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$installDir*") {
-    write-host "[PATH] Adding $installDir to User PATH..." -foregroundColor Cyan
-    $newPath = "$userPath;$installDir"
+# 3. Add to User PATH
+$currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($currentPath -notlike "*$destDir*") {
+    $newPath = "$currentPath;$destDir"
     [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    write-host "[SUCCESS] PATH updated successfully!" -foregroundColor Green
+    Write-Host "Added $destDir to User PATH." -foregroundColor Yellow
 } else {
-    write-host "[INFO] $installDir is already in your PATH." -foregroundColor Gray
+    Write-Host "Directory already in PATH."
 }
 
-write-host ""
-write-host "Success: postman-cli has been installed successfully!" -foregroundColor Green
-write-host "Important: Restart your terminal and type 'postman-cli --help' to get started." -foregroundColor Yellow
+Write-Host "--------------------------------------------------------"
+Write-Host "Installation Complete!" -foregroundColor Green
+Write-Host "RESTART your terminal and type 'reqx --help' to get started." -foregroundColor Yellow
+Write-Host "--------------------------------------------------------"

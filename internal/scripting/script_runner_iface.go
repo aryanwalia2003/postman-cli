@@ -1,8 +1,8 @@
 package scripting
 
 import (
-	"postman-cli/internal/collection"
-	"postman-cli/internal/environment"
+	"reqx/internal/collection"
+	"reqx/internal/environment"
 )
 
 // ScriptRunner defines the interface for executing pre-request and test scripts.
