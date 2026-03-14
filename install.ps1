@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "`n============================================================" -ForegroundColor Cyan
-Write-Host "              🚀 ReqX: Smart Installer" -ForegroundColor Cyan
+Write-Host "              ReqX: Smart Installer" -ForegroundColor Cyan
 Write-Host "============================================================`n" -ForegroundColor Cyan
 
 $exeName = "reqx.exe"
@@ -14,12 +14,12 @@ try {
     # 1. Check for local binary (Dev mode)
     $localExe = Join-Path -Path $PWD -ChildPath $exeName
     if (-not (Test-Path $localExe)) {
-        Write-Host "📡 Local binary not found. Searching GitHub Releases..." -ForegroundColor Gray
+        Write-Host "[-] Local binary not found. Searching GitHub Releases..." -ForegroundColor Gray
         
         $tempDir = Join-Path -Path $env:TEMP -ChildPath "reqx_install_$(Get-Random)"
         if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
         
-        Write-Host "🔍 Connecting to GitHub API..." -ForegroundColor Gray
+        Write-Host "[*] Connecting to GitHub API..." -ForegroundColor Gray
         $apiUri = "https://api.github.com/repos/$repo/releases/latest"
         
         # We must set a User-Agent or GitHub API might reject the request
@@ -31,10 +31,10 @@ try {
         $downloadUrl = $asset.browser_download_url
         $zipPath = Join-Path -Path $tempDir -ChildPath $zipName
         
-        Write-Host "📥 Downloading ReqX ($($apiResponse.tag_name))..." -ForegroundColor Cyan
+        Write-Host "[+] Downloading ReqX ($($apiResponse.tag_name))..." -ForegroundColor Cyan
         Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
         
-        Write-Host "📦 Extracting package..." -ForegroundColor Gray
+        Write-Host "[*] Extracting package..." -ForegroundColor Gray
         Expand-Archive -Path $zipPath -DestinationPath $tempDir -Force
         
         $found = Get-ChildItem -Path $tempDir -Filter $exeName -Recurse | Select-Object -First 1
@@ -60,8 +60,8 @@ try {
         Write-Host "🔗 Added ReqX to your User PATH." -ForegroundColor Yellow
     }
 
-    Write-Host "`n✨ ReqX is now ready!" -ForegroundColor Green
-    Write-Host "💡 Close this window and start a new PowerShell to use 'reqx'.`n" -ForegroundColor Cyan
+    Write-Host "`n[!] ReqX is now ready!" -ForegroundColor Green
+    Write-Host "[*] Close this window and start a new PowerShell to use 'reqx'.`n" -ForegroundColor Cyan
 
 } catch {
     Write-Host "`n❌ Installation Failed!" -ForegroundColor Red
