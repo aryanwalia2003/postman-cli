@@ -52,9 +52,11 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			if req.Async {
 				fmt.Printf("Starting Background Socket.IO connection for '%s'...\n", req.Name)
 
+				readyChan :=make(chan error,1)
+
 				// Background mein execute karo
 				go func(name, url string, hdrs map[string]string, events []collection.SocketIOEvent) {
-					err := cr.sioExecutor.Execute(url, hdrs, events)
+					err := cr.sioExecutor.Execute(url, hdrs, events,readyChan)
 					if err != nil {
 						color.Red("\n[BACKGROUND ERROR] Socket.IO '%s' failed: %v\n> ", name, err)
 					} else {
@@ -62,13 +64,22 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 					}
 				}(req.Name, urlStr, headers, resolvedEvents)
 
+				color.Cyan("Waiting for socketio to establish connection ...\n")
+
+				err:= <-readyChan
+				
+				if err!=nil{
+					color.Yellow("Background Socket failised to connect : %v. Continuing anyway ... \n",err)
+				}else{
+					color.Green("Background Socket is ready and listing ! \n")
+				}
+
 				// Async hai, isliye turant agle request par badh jao (bina block kiye)
 				cr.runScripts("test", req.Scripts, ctx, nil)
 				continue
 
 			} else {
-				// 3. Agar Async nahi hai, toh normal Synchronous execute karo (block the terminal)
-				err := cr.sioExecutor.Execute(urlStr, headers, resolvedEvents)
+				err := cr.sioExecutor.Execute(urlStr, headers, resolvedEvents,nil)
 				if err != nil {
 					fmt.Printf("Socket.IO Request %s failed: %v\n", req.Name, err)
 				} else {

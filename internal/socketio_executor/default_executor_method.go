@@ -16,7 +16,7 @@ import (
 )
 
 // Execute runs the Socket.IO flow, emitting and listening to defined events using raw V4 WebSockets.
-func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]string, events []collection.SocketIOEvent) error {
+func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]string, events []collection.SocketIOEvent,readyChan chan error) error {
 	if rawURL == "" {
 		return errs.InvalidInput("invalid socket.io url: empty")
 	}
@@ -52,6 +52,10 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	dialer := websocket.DefaultDialer
 	conn, _, err := dialer.Dial(u.String(), reqHeaders)
 	if err != nil {
+
+		if readyChan != nil {
+			readyChan <- errs.Wrap(err,errs.KindInternal,"Failed to connect to websocket")
+		}
 		return errs.Wrap(err, errs.KindInternal, "Failed to connect to websocket")
 	}
 	defer conn.Close()
@@ -95,6 +99,9 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 				case <-connected:
 				default:
 					close(connected) // Signal that it's safe to emit
+					if readyChan != nil {
+						readyChan <- nil
+					}
 				}
 			} else if strings.HasPrefix(msgStr, "42") {
 				// Incoming Event
@@ -135,7 +142,11 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	select {
 	case <-connected:
 	case <-time.After(5 * time.Second):
-		return errs.Internal("Timeout waiting for Socket.IO connect (40) packet")
+		err := errs.Internal("Timeout waiting for Socket.IO connect (40) packet")
+		if readyChan != nil {
+			readyChan <- err
+		}
+		return err
 	}
 
 	// 6. Emit predefined events
