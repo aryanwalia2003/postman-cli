@@ -11,9 +11,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"reqx/internal/collection"
+	"reqx/internal/environment"
 	"reqx/internal/errs"
 	"reqx/internal/http_executor"
 	"reqx/internal/metrics"
+	"reqx/internal/progress"
 	"reqx/internal/runner"
 	"reqx/internal/storage"
 )
@@ -26,6 +28,9 @@ func NewRunCmd() *cobra.Command {
 	var iterations int // <-- NEW: Iterations flag variable
 	var workers int    // <-- NEW: Workers flag variable
 	var exportPath string
+	var duration time.Duration
+	var rps float64
+	var stages string
 
 	// NEW: Variables for Temporary Request Injection
 	var injIndex string
@@ -35,31 +40,35 @@ func NewRunCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "run [collection.json]",
 		Short: "Execute a collection of requests",
-		Long: `🏃 Parse and execute a .json collection file sequentially.
-The 'run' command is the heart of ReqX. It handles variable replacement, 
-cookie persistence, pre-request scripts, and test assertions.
+		Long: `🏃 Parse and execute a .json collection file with professional load testing capabilities.
+The 'run' command handles variable replacement, cookie persistence, and test assertions.
 
 🛠 Advanced Flow Control:
-1. Multi-Iteration (-n): Run the entire collection multiple times for load testing.
-2. Filtering (-f): Execute only requests whose names match a specific substring.
-3. Injection: Temporarily insert a brand-new request (like a one-time auth setup) 
-   at a specific position without modifying your source collection file.`,
+1. Multi-Iteration (-n): Run the entire collection multiple times.
+2. Duration-based (-d): Run workers continuously for a set time (e.g. 1m, 5m).
+3. Ramping Stages (--stages): Simulate real-world traffic with ramp-up/down.
+4. Arrival Rate (--rps): Cap the maximum requests sent per second.
+5. Filtering (-f): Execute only requests whose names match a specific substring.
+6. Injection: Temporarily insert a brand-new request anywhere in the collection.`,
 		Example: `  # Standard execution with environment
   reqx run my-collection.json -e dev-env.json
   
-  # Load Testing: Run 20 iterations and view aggregated stats
-  reqx run my-collection.json -n 20
+  # Load Testing: Run for 1 minute with 50 concurrent users
+  reqx run my-collection.json -d 1m -c 50 -q
   
-  # Targeted Testing: Run only "Login" and "Profile" requests
-  reqx run my-collection.json -f "Login" -f "Profile"
+  # Ramping Test: Ramp up to 20 users, sustain, then ramp down
+  reqx run my-collection.json --stages "10s:5,30s:20,10s:0" -q
   
-  # Debugging: Verbose output showing full request and response bodies
-  reqx run my-collection.json -v
+  # Rate Limited: Run with 20 workers but cap at 10 req/s
+  reqx run my-collection.json -d 2m -c 20 --rps 10
+  
+  # Export Results: Save raw metrics for analysis
+  reqx run my-collection.json -n 100 --export results.json
   
   # Custom Injection: Add a setup request at the very beginning (index 1)
   reqx run my-api.json --inject-index 1 --inject-name "Auth Setup" --inject-url "http://api.com/auth"
   
-  # Stateless: Disable cookie persistence for a clean run
+  # Stateless: Disable cookie persistence
   reqx run my-api.json --no-cookies`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -84,15 +93,87 @@ cookie persistence, pre-request scripts, and test assertions.
 				return errs.Wrap(err, errs.KindInvalidInput, "could not parse collection JSON")
 			}
 
-			// =========================================================
-			// ▼▼▼ NEW: PARALLEL DISPATCH (LOAD TESTING) ▼▼▼
-			// =========================================================
 			verbosityLevel := runner.VerbosityNormal
 			if quiet {
 				verbosityLevel = runner.VerbosityQuiet
 			} else if verbose {
 				verbosityLevel = runner.VerbosityFull
 			}
+
+			// ── Phase 3: Scheduler path ──────────────────────────────────────
+			// Triggered by any of: --duration, --rps, --stages.
+			// Overrides -n / -c entirely.
+			if duration > 0 || rps > 0 || stages != "" {
+				var parsedStages []runner.Stage
+				if stages != "" {
+					var parseErr error
+					parsedStages, parseErr = runner.ParseStages(stages)
+					if parseErr != nil {
+						return parseErr
+					}
+				}
+
+				// Load environment once; Scheduler clones it per worker.
+				var baseEnv *environment.Environment
+				if envFilePath != "" {
+					envBytes, err := storage.ReadJSONFile(envFilePath)
+					if err != nil {
+						return errs.Wrap(err, errs.KindInvalidInput, "could not read environment file")
+					}
+					baseEnv, err = storage.ParseEnvironment(envBytes)
+					if err != nil {
+						return errs.Wrap(err, errs.KindInvalidInput, "could not parse environment JSON")
+					}
+				}
+
+				cfg := runner.SchedulerConfig{
+					Coll:         coll,
+					BaseEnv:      baseEnv,
+					NoCookies:    noCookies,
+					ClearCookies: clearCookies,
+					Verbosity:    verbosityLevel,
+					Stages:       parsedStages,
+					Duration:     duration,
+					MaxWorkers:   workers, // -c still sets the fixed concurrency in duration mode
+					RPS:          rps,
+				}
+
+				printPhase3Header(cfg)
+
+				sched := runner.NewScheduler(cfg)
+
+				// Progress bar: unbounded for duration mode, bounded for stages (if total known).
+				bar := progress.NewBar(0, workers)
+				bar.Start()
+
+				totalStart := time.Now()
+				allResults := sched.Run()
+				bar.Stop()
+
+				// Flatten into [][]RequestMetric (one slice per completed iteration).
+				allMetrics := make([][]runner.RequestMetric, 0, len(allResults))
+				for _, r := range allResults {
+					if r.Metrics != nil {
+						allMetrics = append(allMetrics, r.Metrics)
+					}
+				}
+
+				report := metrics.Analyze(allMetrics, time.Since(totalStart))
+				metrics.PrintReport(report)
+
+				if exportPath != "" {
+					if err := metrics.ExportJSON(allMetrics, exportPath); err != nil {
+						color.Red("⚠ Export failed: %v\n", err)
+					} else {
+						color.Cyan("📄 Results exported to: %s\n", exportPath)
+					}
+				}
+				return nil
+			}
+
+			// =========================================================
+			// ▼▼▼ NEW: PARALLEL DISPATCH (LOAD TESTING) ▼▼▼
+			// =========================================================
 
 			if workers > 1 {
 				cfg := runner.WorkerConfig{
@@ -281,6 +362,12 @@ cookie persistence, pre-request scripts, and test assertions.
 		"Suppress per-request logs; show real-time progress bar instead")
 	c.Flags().StringVar(&exportPath, "export", "",
 		"Path to export raw request metrics as newline-delimited JSON (e.g. results.json)")
+	c.Flags().DurationVarP(&duration, "duration", "d", 0,
+		"Run duration (e.g. 30s, 2m). Workers run until time elapses.")
+	c.Flags().Float64Var(&rps, "rps", 0,
+		"Max requests per second to inject (0 = unlimited). Works with -d or --stages.")
+	c.Flags().StringVar(&stages, "stages", "",
+		`Ramp plan as "<dur>:<workers>" segments, e.g. "10s:5,30s:20,10s:0"`)
 
 	// Injection Flags
 	c.Flags().StringVar(&injIndex, "inject-index", "", "Position (1-based) to temporarily insert a new request")
@@ -291,4 +378,20 @@ cookie persistence, pre-request scripts, and test assertions.
 	c.Flags().StringSliceVar(&injHeaders, "inject-header", []string{}, "Header for temporary request (e.g., 'Key: Value')")
 
 	return c
+}
+
+func printPhase3Header(cfg runner.SchedulerConfig) {
+	fmt.Println()
+	if len(cfg.Stages) > 0 {
+		color.Cyan("🎚  Stage-based load test — %d stages\n", len(cfg.Stages))
+		for i, s := range cfg.Stages {
+			color.Cyan("    Stage %d: %d workers for %v\n", i+1, s.TargetWorkers, s.Duration)
+		}
+	} else {
+		color.Cyan("⏱  Duration-based load test — %v, %d workers", cfg.Duration, cfg.MaxWorkers)
+	}
+	if cfg.RPS > 0 {
+		color.Cyan("  |  Rate: %.1f req/s", cfg.RPS)
+	}
+	fmt.Println()
 }
