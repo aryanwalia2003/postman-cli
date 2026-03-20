@@ -28,19 +28,13 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 
 // Run executes all requests defined in the ExecutionPlan and returns per-request metrics.
 // The plan is read-only — Run never modifies plan.Requests.
-//
-// The WaitGroup for async background tasks (WS/SIO async: true) is declared
-// locally here. This means the same CollectionRunner can be called in a loop
-// across iterations without any WaitGroup reuse panic — each Run() call gets
-// a fresh, zeroed WaitGroup on the stack, independent of every other call.
+// A fresh local WaitGroup is used each call so the runner is safe to reuse across iterations.
 func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext) ([]RequestMetric, error) {
 	verboseColor := color.New(color.FgYellow)
 	timingColor  := color.New(color.FgHiCyan)
 
-	// Local WaitGroup — fresh every call, no cross-iteration bleed.
 	var wg sync.WaitGroup
 	stopAsyncSockets := make(chan struct{})
-
 	metrics := make([]RequestMetric, 0, len(plan.Requests))
 
 	defer func() {
@@ -48,7 +42,7 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 			color.Cyan("\nCollection run finished. Waiting for background connections...\n")
 		}
 		close(stopAsyncSockets)
-		wg.Wait() // waits only for goroutines spawned THIS call
+		wg.Wait()
 		if cr.verbosity >= VerbosityNormal {
 			color.Green("All connections closed cleanly.\n")
 		}
@@ -73,9 +67,10 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 		}
 
 		// ── HTTP ─────────────────────────────────────────────────────────────
+		reqBody := cr.replaceVars(req.Body, ctx)
 		var bodyReader io.Reader
-		if req.Body != "" {
-			bodyReader = bytes.NewBuffer([]byte(cr.replaceVars(req.Body, ctx)))
+		if reqBody != "" {
+			bodyReader = bytes.NewBufferString(reqBody)
 		}
 
 		httpReq, err := http.NewRequest(strings.ToUpper(req.Method), urlStr, bodyReader)
@@ -94,9 +89,7 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 			verboseColor.Println("-------------------- REQUEST --------------------")
 			dump, _ := httputil.DumpRequestOut(httpReq, true)
 			scanner := bufio.NewScanner(strings.NewReader(string(dump)))
-			for scanner.Scan() {
-				verboseColor.Printf("> %s\n", scanner.Text())
-			}
+			for scanner.Scan() { verboseColor.Printf("> %s\n", scanner.Text()) }
 			verboseColor.Println("-------------------------------------------------")
 		}
 
@@ -130,18 +123,35 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 			metrics = append(metrics, RequestMetric{
 				Name: req.Name, Protocol: "HTTP",
 				Duration: totalTime, Error: err, ErrorMsg: err.Error(),
+				BytesSent: int64(len(reqBody)),
 			})
 			continue
 		}
 
 		buf := acquireBodyBuf()
-		_, _ = io.Copy(buf, resp.Body)
+		bytesReceived, _ := io.Copy(buf, resp.Body)
 		resp.Body.Close()
 		bodyBytes := buf.Bytes()
 
+		// ── Compute TTFB ──────────────────────────────────────────────────────
+		var ttfb time.Duration
+		if !resStart.IsZero() {
+			if !reqDone.IsZero() {
+				ttfb = resStart.Sub(reqDone)
+			} else {
+				ttfb = resStart.Sub(t0)
+			}
+		}
+
 		m := RequestMetric{
-			Name: req.Name, Protocol: "HTTP",
-			StatusCode: resp.StatusCode, StatusString: resp.Status, Duration: totalTime,
+			Name:          req.Name,
+			Protocol:      "HTTP",
+			StatusCode:    resp.StatusCode,
+			StatusString:  resp.Status,
+			Duration:      totalTime,
+			BytesSent:     int64(len(reqBody)),
+			BytesReceived: bytesReceived,
+			TTFB:          ttfb,
 		}
 		if resp.StatusCode >= 400 {
 			m.ErrorMsg = resp.Status
@@ -149,14 +159,12 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 		metrics = append(metrics, m)
 
 		if cr.verbosity >= VerbosityFull {
-			var dnsTime, tcpTime, tlsTime, ttfbTime, transferTime time.Duration
+			var dnsTime, tcpTime, tlsTime, transferTime time.Duration
 			if !dnsDone.IsZero()  { dnsTime  = dnsDone.Sub(dnsStart) }
 			if !connDone.IsZero() { tcpTime  = connDone.Sub(connStart) }
 			if !tlsDone.IsZero()  { tlsTime  = tlsDone.Sub(tlsStart) }
-			if !resStart.IsZero() {
-				if !reqDone.IsZero() { ttfbTime = resStart.Sub(reqDone) } else { ttfbTime = resStart.Sub(t0) }
-				transferTime = time.Since(resStart)
-			}
+			if !resStart.IsZero() { transferTime = time.Since(resStart) }
+
 			verboseColor.Println("-------------------- RESPONSE -------------------")
 			verboseColor.Printf("< %s %s\n", resp.Proto, resp.Status)
 			for key, values := range resp.Header {
@@ -185,21 +193,20 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 				timingColor.Printf("  TCP Connection : %v\n", roundMs(tcpTime))
 				timingColor.Printf("  TLS Handshake  : %v\n", roundMs(tlsTime))
 			}
-			timingColor.Printf("  Server (TTFB)  : %v\n", roundMs(ttfbTime))
+			timingColor.Printf("  Server (TTFB)  : %v\n", roundMs(ttfb))
 			timingColor.Printf("  Data Transfer  : %v\n", roundMs(transferTime))
+			timingColor.Printf("  Bytes Received : %d B\n", bytesReceived)
 			timingColor.Printf("  --------------------------\n")
 			timingColor.Printf("  Total Time     : %v\n", roundMs(totalTime))
 			timingColor.Println("-------------------------------------------------")
 		}
 		if cr.verbosity >= VerbosityNormal {
 			statusColor := color.New(color.FgHiGreen).SprintfFunc()
-			if resp.StatusCode >= 400 {
-				statusColor = color.New(color.FgHiRed).SprintfFunc()
-			}
-			fmt.Printf("Status: %s  |  Time: %v\n", statusColor(resp.Status), roundMs(totalTime))
+			if resp.StatusCode >= 400 { statusColor = color.New(color.FgHiRed).SprintfFunc() }
+			fmt.Printf("Status: %s  |  Time: %v  |  %d B received\n",
+				statusColor(resp.Status), roundMs(totalTime), bytesReceived)
 		}
 
-		// bodyBytes is valid until releaseBodyBuf; convert to string before releasing.
 		bodyString := string(bodyBytes)
 		releaseBodyBuf(buf)
 		scriptResp := &scripting.ResponseAPI{
@@ -217,7 +224,6 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 
 // ── WebSocket helper ──────────────────────────────────────────────────────────
 
-// wg is passed by pointer from Run() — it is the local WaitGroup for this iteration.
 func (cr *CollectionRunner) runWebSocket(
 	req collection.Request, urlStr string,
 	ctx *RuntimeContext, wg *sync.WaitGroup,

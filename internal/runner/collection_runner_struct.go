@@ -17,6 +17,10 @@ type RequestMetric struct{
 	Error error
 	ErrorMsg     string    
 	WorkerID     int       
+
+	BytesSent     int64
+	BytesReceived int64
+	TTFB          time.Duration
 }
 // CollectionRunner handles executing a full collection of requests.
 type CollectionRunner struct {

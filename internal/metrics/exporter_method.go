@@ -9,18 +9,20 @@ import (
 
 // exportRecord is the JSON shape written per request.
 type exportRecord struct {
-	Iteration  int    `json:"iteration"`
-	WorkerID   int    `json:"worker_id"`
-	Name       string `json:"name"`
-	Protocol   string `json:"protocol"`
-	StatusCode int    `json:"status_code"`
-	Status     string `json:"status"`
-	DurationMs int64  `json:"duration_ms"`
-	Error      string `json:"error,omitempty"`
+	Iteration     int    `json:"iteration"`
+	WorkerID      int    `json:"worker_id"`
+	Name          string `json:"name"`
+	Protocol      string `json:"protocol"`
+	StatusCode    int    `json:"status_code"`
+	Status        string `json:"status"`
+	DurationMs    int64  `json:"duration_ms"`
+	TTFBMs        int64  `json:"ttfb_ms,omitempty"`
+	BytesSent     int64  `json:"bytes_sent,omitempty"`
+	BytesReceived int64  `json:"bytes_received,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 // ExportJSON writes all raw metrics to path as newline-delimited JSON.
-// Each line is one complete JSON object, making it streamable and jq-friendly.
 func ExportJSON(allMetrics [][]runner.RequestMetric, path string) error {
 	f, err := os.Create(path)
 	if err != nil {
@@ -32,13 +34,16 @@ func ExportJSON(allMetrics [][]runner.RequestMetric, path string) error {
 	for iterIdx, iterMetrics := range allMetrics {
 		for _, m := range iterMetrics {
 			rec := exportRecord{
-				Iteration:  iterIdx + 1,
-				WorkerID:   m.WorkerID,
-				Name:       m.Name,
-				Protocol:   m.Protocol,
-				StatusCode: m.StatusCode,
-				Status:     m.StatusString,
-				DurationMs: m.Duration.Milliseconds(),
+				Iteration:     iterIdx + 1,
+				WorkerID:      m.WorkerID,
+				Name:          m.Name,
+				Protocol:      m.Protocol,
+				StatusCode:    m.StatusCode,
+				Status:        m.StatusString,
+				DurationMs:    m.Duration.Milliseconds(),
+				TTFBMs:        m.TTFB.Milliseconds(),
+				BytesSent:     m.BytesSent,
+				BytesReceived: m.BytesReceived,
 			}
 			if m.Error != nil {
 				rec.Error = m.Error.Error()

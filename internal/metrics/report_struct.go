@@ -20,6 +20,16 @@ type RequestStat struct {
 	P95         time.Duration
 	P99         time.Duration
 	AvgDuration time.Duration
+
+	TTFBHistogram *hdrhistogram.Histogram
+	AvgTTFB       time.Duration
+	P95TTFB       time.Duration
+
+	StatusCodes map[int]int
+
+	BytesSent     int64
+	BytesReceived int64
+
 	TopErrors   []ErrorGroup
 }
 
@@ -35,12 +45,21 @@ type Report struct {
 	TotalSuccess  int
 	TotalFailures int
 	SuccessRate   float64
+
 	AvgLatency    time.Duration
 	P50           time.Duration
 	P90           time.Duration
 	P95           time.Duration
 	P99           time.Duration
+
 	RPS           float64
+
+	TotalBytesSent     int64
+	TotalBytesReceived int64
+	ThroughputMBps     float64
+
+	StatusCodes map[int]int
+
 	TotalDuration time.Duration
 	PerRequest    []RequestStat
 }
