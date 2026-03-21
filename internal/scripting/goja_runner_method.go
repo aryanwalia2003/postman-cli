@@ -4,49 +4,68 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dop251/goja"
 	"github.com/fatih/color"
+
 	"reqx/internal/collection"
 	"reqx/internal/environment"
 	"reqx/internal/errs"
 )
 
-// Execute runs a JavaScript snippet within a pooled VM, injecting the Environment and optional Response.
-func (g *GojaRunner) Execute(script *collection.Script, env *environment.Environment, resp *ResponseAPI) error {
+// Execute runs a script on this VU's owned VM.
+//
+// If compiled is non-nil (normal load-test path via ExecutionPlan), the
+// pre-compiled bytecode is run directly — goja.RunProgram skips parse+compile.
+//
+// If compiled is nil (single-request `req` command, which has no plan),
+// the source is compiled on the fly from script.Exec via RunString. This
+// fallback keeps the `req` command working without requiring a full planner.
+//
+// The VM is reused across calls — it persists for the VU's lifetime.
+// Each call injects fresh pm/console bindings and clears them on exit,
+// ensuring no state bleeds between iterations within the same VU.
+func (g *GojaRunner) Execute(
+	script   *collection.Script,
+	env      *environment.Environment,
+	resp     *ResponseAPI,
+	compiled *goja.Program,
+) error {
 	if script == nil || len(script.Exec) == 0 {
 		return nil
 	}
 
-	vm := acquireVM()
-	defer releaseVM(vm)
+	vm := g.vm
 
-	// 1. Inject Console Interceptor
+	// Inject per-call bindings.
 	vm.Set("console", &ConsoleAPI{})
 
-	// 2. Prepare the pm.environment API
-	envAPI := &EnvironmentAPI{env: env}
-
-	// 3. Prepare the tracking slice for pm.test results
 	testResults := make(TestResults, 0)
-
-	// 4. Construct the root `pm` object
 	pmObj := &PmAPI{
-		Environment: envAPI,
+		Environment: &EnvironmentAPI{env: env},
 		Response:    resp,
 		TestResults: &testResults,
 	}
-
 	vm.Set("pm", pmObj)
 
-	// Combine script lines into one block
-	scriptSource := strings.Join(script.Exec, "\n")
-
-	// Run the script
-	_, err := vm.RunString(scriptSource)
-	if err != nil {
-		return errs.Wrap(err, errs.KindInternal, "script execution failed")
+	// Run — use pre-compiled program when available, fall back to RunString.
+	var runErr error
+	if compiled != nil {
+		_, runErr = vm.RunProgram(compiled)
+	} else {
+		src := strings.Join(script.Exec, "\n")
+		_, runErr = vm.RunString(src)
 	}
 
-	// Dump test results to the terminal for visibility
+	// Always clear injected bindings before returning, even on error.
+	// This prevents pm/console from one iteration leaking into the next.
+	vm.Set("pm", goja.Undefined())
+	vm.Set("console", goja.Undefined())
+
+	if runErr != nil {
+		return errs.Wrap(runErr, errs.KindInternal, "script execution failed")
+	}
+
+	// Print test results.
 	for _, res := range testResults {
 		if res.Passed {
 			fmt.Println(color.GreenString("✅ PASS: " + res.Name))

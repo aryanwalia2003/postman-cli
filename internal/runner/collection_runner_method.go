@@ -19,6 +19,7 @@ import (
 	"reqx/internal/planner"
 	"reqx/internal/scripting"
 
+	"github.com/dop251/goja"
 	"github.com/fatih/color"
 )
 
@@ -48,21 +49,21 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 		}
 	}()
 
-	for _, req := range plan.Requests {
+	for reqIdx, req := range plan.Requests {
 		if cr.verbosity >= VerbosityNormal {
 			fmt.Printf("\n[RUN] Running request: %s\n", req.Name)
 		}
 
-		cr.runScripts("prerequest", req.Scripts, ctx, nil)
+		cr.runScripts("prerequest", req.Scripts, ctx, nil, plan, reqIdx)
 		urlStr := cr.replaceVars(req.URL, ctx)
 
 		if strings.ToUpper(req.Protocol) == "WS" {
-			metrics = cr.runWebSocket(req, urlStr, ctx, &wg, metrics, stopAsyncSockets)
+			metrics = cr.runWebSocket(req, urlStr, ctx, &wg, metrics, stopAsyncSockets, plan, reqIdx)
 			continue
 		}
 
 		if strings.ToUpper(req.Protocol) == "SOCKETIO" {
-			metrics = cr.runSocketIO(req, urlStr, ctx, &wg, metrics, stopAsyncSockets)
+			metrics = cr.runSocketIO(req, urlStr, ctx, &wg, metrics, stopAsyncSockets, plan, reqIdx)
 			continue
 		}
 
@@ -216,7 +217,7 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 		for k, v := range resp.Header {
 			if len(v) > 0 { scriptResp.Headers.Headers[k] = v[0] }
 		}
-		cr.runScripts("test", req.Scripts, ctx, scriptResp)
+		cr.runScripts("test", req.Scripts, ctx, scriptResp, plan, reqIdx)
 	}
 
 	return metrics, nil
@@ -228,6 +229,7 @@ func (cr *CollectionRunner) runWebSocket(
 	req collection.Request, urlStr string,
 	ctx *RuntimeContext, wg *sync.WaitGroup,
 	metrics []RequestMetric, stop chan struct{},
+	plan *planner.ExecutionPlan, reqIdx int,
 ) []RequestMetric {
 	headers := cr.resolvedHeaders(req.Headers, ctx)
 	var events []collection.WebSocketEvent
@@ -248,13 +250,13 @@ func (cr *CollectionRunner) runWebSocket(
 		err := <-readyChan
 		metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "WS", Duration: time.Since(start), StatusString: "ASYNC", Error: err})
 		if err != nil { color.Yellow("⚠ Background WS failed: %v. Continuing...\n", err) } else { color.Green("Background WS ready!\n") }
-		cr.runScripts("test", req.Scripts, ctx, nil)
+		cr.runScripts("test", req.Scripts, ctx, nil, plan, reqIdx)
 		return metrics
 	}
 	err := cr.weExecutor.Execute(urlStr, headers, events, nil, nil)
 	metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "WS", Duration: time.Since(start), StatusString: "SYNC", Error: err})
 	if err != nil { fmt.Printf("WS request %s failed: %v\n", req.Name, err) }
-	cr.runScripts("test", req.Scripts, ctx, nil)
+	cr.runScripts("test", req.Scripts, ctx, nil, plan, reqIdx)
 	return metrics
 }
 
@@ -264,6 +266,7 @@ func (cr *CollectionRunner) runSocketIO(
 	req collection.Request, urlStr string,
 	ctx *RuntimeContext, wg *sync.WaitGroup,
 	metrics []RequestMetric, stop chan struct{},
+	plan *planner.ExecutionPlan, reqIdx int,
 ) []RequestMetric {
 	headers := cr.resolvedHeaders(req.Headers, ctx)
 	var events []collection.SocketIOEvent
@@ -284,13 +287,13 @@ func (cr *CollectionRunner) runSocketIO(
 		err := <-readyChan
 		metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "SOCKET", Duration: time.Since(start), StatusString: "ASYNC", Error: err})
 		if err != nil { color.Yellow("⚠ Background Socket failed: %v. Continuing...\n", err) } else { color.Green("Background Socket ready!\n") }
-		cr.runScripts("test", req.Scripts, ctx, nil)
+		cr.runScripts("test", req.Scripts, ctx, nil, plan, reqIdx)
 		return metrics
 	}
 	err := cr.sioExecutor.Execute(urlStr, headers, events, nil, nil)
 	metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "SOCKET", Duration: time.Since(start), StatusString: "SYNC", Error: err})
 	if err != nil { fmt.Printf("SIO request %s failed: %v\n", req.Name, err) } else { fmt.Printf("SIO request %s OK\n", req.Name) }
-	cr.runScripts("test", req.Scripts, ctx, nil)
+	cr.runScripts("test", req.Scripts, ctx, nil, plan, reqIdx)
 	return metrics
 }
 
@@ -312,10 +315,22 @@ func (cr *CollectionRunner) resolveAuth(reqAuth, collAuth *collection.Auth, ctx 
 	return resolved
 }
 
-func (cr *CollectionRunner) runScripts(scriptType string, scripts []collection.Script, ctx *RuntimeContext, resp *scripting.ResponseAPI) {
+func (cr *CollectionRunner) runScripts(
+	scriptType string,
+	scripts    []collection.Script,
+	ctx        *RuntimeContext,
+	resp        *scripting.ResponseAPI,
+	plan        *planner.ExecutionPlan,
+	reqIdx      int,
+) {
 	for _, s := range scripts {
 		if s.Type == scriptType {
-			if err := cr.scriptRunner.Execute(&s, ctx.Environment, resp); err != nil {
+			var compiled *goja.Program
+			if plan != nil && plan.CompiledScripts != nil {
+				key := planner.ScriptKey{RequestIndex: reqIdx, ScriptType: scriptType}
+				compiled = plan.CompiledScripts[key]
+			}
+			if err := cr.scriptRunner.Execute(&s, ctx.Environment, resp, compiled); err != nil {
 				fmt.Printf("Warning: script execution failed: %v\n", err)
 			}
 		}

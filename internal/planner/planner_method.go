@@ -28,9 +28,15 @@ func BuildExecutionPlan(coll *collection.Collection, cfg PlanConfig) (*Execution
 		return nil, err
 	}
 
+	compiled,err := compileScripts(requests)
+	if err!=nil{
+		return nil, err
+	}
+
 	return &ExecutionPlan{
 		Requests:       requests,
 		CollectionAuth: coll.Auth,
+		CompiledScripts: compiled,
 	}, nil
 }
 
