@@ -141,6 +141,23 @@ func (cr *CollectionRunner) RunDAG(plan *planner.ExecutionPlan, ctx *RuntimeCont
 		}
 	}
 
+	// Final barrier for all background connections started during DAG execution.
+	// Only the top-level RunDAG call (on the main plan) should do this wait.
+	if plan.IsDAGNode {
+		// sub-nodes keep their connections alive
+	} else {
+		defer func() {
+			if cr.verbosity >= VerbosityNormal {
+				color.Cyan("\n[DAG] All levels finished. Waiting for background connections...\n")
+			}
+			ctx.AsyncStopOnce.Do(func() { close(ctx.AsyncStop) })
+			ctx.AsyncWG.Wait()
+			if cr.verbosity >= VerbosityNormal {
+				color.Green("[DAG] All background connections closed cleanly.\n")
+			}
+		}()
+	}
+
 	return allMetrics, nil
 }
 

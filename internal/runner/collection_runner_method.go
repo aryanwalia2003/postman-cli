@@ -42,20 +42,22 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 	verboseColor := color.New(color.FgYellow)
 	timingColor := color.New(color.FgHiCyan)
 
-	var wg sync.WaitGroup
-	stopAsyncSockets := make(chan struct{})
 	metrics := make([]RequestMetric, 0, len(plan.Requests))
-
-	defer func() {
-		if cr.verbosity >= VerbosityNormal && !plan.IsDAGNode {
-			color.Cyan("\nCollection run finished. Waiting for background connections...\n")
-		}
-		close(stopAsyncSockets)
-		wg.Wait()
-		if cr.verbosity >= VerbosityNormal && !plan.IsDAGNode {
-			color.Green("All connections closed cleanly.\n")
-		}
-	}()
+	
+	// If it's a sub-node in a DAG, we DON'T wait here. 
+	// The parent RunDAG will handle the final cleanup once ALL levels finish.
+	if !plan.IsDAGNode {
+		defer func() {
+			if cr.verbosity >= VerbosityNormal {
+				color.Cyan("\nCollection run finished. Waiting for background connections...\n")
+			}
+			ctx.AsyncStopOnce.Do(func() { close(ctx.AsyncStop) })
+			ctx.AsyncWG.Wait()
+			if cr.verbosity >= VerbosityNormal {
+				color.Green("All connections closed cleanly.\n")
+			}
+		}()
+	}
 
 	for reqIdx, req := range plan.Requests {
 		if cr.verbosity >= VerbosityNormal {
@@ -66,12 +68,12 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 		urlStr := cr.replaceVars(req.URL, ctx)
 
 		if strings.ToUpper(req.Protocol) == "WS" {
-			metrics = cr.runWebSocket(req, urlStr, ctx, &wg, metrics, stopAsyncSockets, plan, reqIdx)
+			metrics = cr.runWebSocket(req, urlStr, ctx, ctx.AsyncWG, metrics, ctx.AsyncStop, plan, reqIdx)
 			continue
 		}
 
 		if strings.ToUpper(req.Protocol) == "SOCKETIO" {
-			metrics = cr.runSocketIO(req, urlStr, ctx, &wg, metrics, stopAsyncSockets, plan, reqIdx)
+			metrics = cr.runSocketIO(req, urlStr, ctx, ctx.AsyncWG, metrics, ctx.AsyncStop, plan, reqIdx)
 			continue
 		}
 
