@@ -4,8 +4,9 @@ import (
 	"database/sql"
 	"path/filepath"
 
-	_ "github.com/glebarez/go-sqlite"
 	"reqx/internal/storage"
+
+	_ "github.com/glebarez/go-sqlite"
 )
 
 const schema = `
@@ -26,6 +27,15 @@ CREATE TABLE IF NOT EXISTS request_stats (
 	failures     INTEGER NOT NULL,
 	p95_ms       INTEGER NOT NULL,
 	avg_ms       INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dag_nodes (
+	run_id       TEXT    NOT NULL REFERENCES test_runs(id),
+	name         TEXT    NOT NULL,
+	status       TEXT    NOT NULL,
+	duration_ms  INTEGER NOT NULL,
+	level_idx    INTEGER NOT NULL,
+	depends_on   TEXT    NOT NULL
 );
 `
 

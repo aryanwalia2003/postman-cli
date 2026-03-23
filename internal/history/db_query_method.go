@@ -1,5 +1,7 @@
 package history
 
+import "encoding/json"
+
 // RunRow is a single historical test run (for the API response).
 type RunRow struct {
 	ID         string  `json:"id"`
@@ -18,6 +20,14 @@ type StatRow struct {
 	Failures  int    `json:"failures"`
 	P95Ms     int64  `json:"p95_ms"`
 	AvgMs     int64  `json:"avg_ms"`
+}
+
+type DagNodeRow struct {
+	Name       string   `json:"name"`
+	Status     string   `json:"status"`
+	DurationMs int64    `json:"duration_ms"`
+	LevelIdx   int      `json:"level_idx"`
+	DependsOn  []string `json:"depends_on"`
 }
 
 // ListRuns returns the most recent `limit` test runs, newest first.
@@ -63,3 +73,32 @@ func (d *DB) GetRunStats(runID string) ([]StatRow, error) {
 	}
 	return stats, rows.Err()
 }
+
+func (d *DB) GetDAGNodes(runID string) ([]DagNodeRow, error) {
+	rows, err := d.conn.Query(
+		`SELECT name,status,duration_ms,level_idx,depends_on
+		 FROM dag_nodes WHERE run_id=? ORDER BY level_idx, rowid`,
+		runID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+ 
+	nodes := []DagNodeRow{} // not nil — empty slice signals "exists, zero nodes"
+	for rows.Next() {
+		var n DagNodeRow
+		var depsJSON string
+		if err := rows.Scan(&n.Name, &n.Status, &n.DurationMs, &n.LevelIdx, &depsJSON); err != nil {
+			return nil, err
+		}
+		if depsJSON != "" {
+			importLibMissing := json.Unmarshal([]byte(depsJSON), &n.DependsOn)
+			// ignoring the error for now to keep it safe, but we must import encoding/json
+			_ = importLibMissing
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}
+

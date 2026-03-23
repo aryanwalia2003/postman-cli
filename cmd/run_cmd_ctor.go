@@ -32,7 +32,6 @@ func NewRunCmd() *cobra.Command {
 	var rps float64
 	var stages, personasPath string
 
-	// Injection flags
 	var injIndex, injName, injMethod, injURL, injBody string
 	var injHeaders []string
 
@@ -51,16 +50,16 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 6. Injection: Temporarily insert a brand-new request anywhere in the collection.`,
 		Example: `  # Standard execution with environment
   reqx run my-collection.json -e dev-env.json
-  
+
   # Load Testing: Run for 1 minute with 50 concurrent users
   reqx run my-collection.json -d 1m -c 50 -q
-  
+
   # Ramping Test: Ramp up to 20 users, sustain, then ramp down
   reqx run my-collection.json --stages "10s:5,30s:20,10s:0" -q
-  
+
   # Rate Limited: Run with 20 workers but cap at 10 req/s
   reqx run my-collection.json -d 2m -c 20 --rps 10
-  
+
   # Export Results: Save raw metrics for analysis
   reqx run my-collection.json -n 100 --export results.json`,
 		Args: cobra.ExactArgs(1),
@@ -70,8 +69,6 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 			}
 
 			totalStartTime := time.Now()
-
-			// 1. Load context
 
 			collBytes, err := storage.ReadJSONFile(args[0])
 			if err != nil {
@@ -105,8 +102,6 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 				}
 			}
 
-			// 2. Build execution plan
-
 			plan, err := planner.BuildExecutionPlan(coll, planner.PlanConfig{
 				RequestFilters: requestFilters,
 				InjIndex:       injIndex,
@@ -129,8 +124,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 
 			allMetrics := make([][]runner.RequestMetric, 0, iterations)
 
-			// 3a. Phase 3: Scheduler
-
+			// 3a. Scheduler (duration / RPS / stages)
 			if duration > 0 || rps > 0 || stages != "" {
 				var parsedStages []runner.Stage
 				if stages != "" {
@@ -166,12 +160,11 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 						allMetrics = append(allMetrics, r.Metrics)
 					}
 				}
-				printAndExport(allMetrics, time.Since(t0), exportPath, filepath.Base(args[0]))
+				printAndExport(allMetrics, time.Since(t0), exportPath, filepath.Base(args[0]), plan)
 				return nil
 			}
 
-			// 3b. Phase 1: WorkerPool
-
+			// 3b. WorkerPool (parallel iterations)
 			if workers > 1 {
 				cfg := runner.WorkerConfig{
 					Plan:         plan,
@@ -195,12 +188,11 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 					allMetrics = append(allMetrics, r.Metrics)
 				}
 
-				printAndExport(allMetrics, time.Since(totalStartTime), exportPath, filepath.Base(args[0]))
+				printAndExport(allMetrics, time.Since(totalStartTime), exportPath, filepath.Base(args[0]), plan)
 				return nil
 			}
 
 			// 3c. Sequential execution
-
 			for i := 1; i <= iterations; i++ {
 				if iterations > 1 {
 					hdr := fmt.Sprintf("  Iteration %d / %d  ", i, iterations)
@@ -239,12 +231,11 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 				}
 			}
 
-			printAndExport(allMetrics, time.Since(totalStartTime), exportPath, filepath.Base(args[0]))
+			printAndExport(allMetrics, time.Since(totalStartTime), exportPath, filepath.Base(args[0]), plan)
 			return nil
 		},
 	}
 
-	// Standard flags
 	c.Flags().IntVarP(&iterations, "iterations", "n", 1, "Number of times to run the collection")
 	c.Flags().IntVarP(&workers, "workers", "c", 1, "Number of parallel workers (virtual users)")
 	c.Flags().StringVarP(&envFilePath, "env", "e", "", "Path to the environment JSON file")
@@ -259,7 +250,6 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 	c.Flags().StringVar(&stages, "stages", "", `Ramp plan, e.g. "10s:5,30s:20,10s:0"`)
 	c.Flags().StringVar(&personasPath, "personas", "", "CSV file of personas (columns become {{persona.<col>}})")
 
-	// Injection flags
 	c.Flags().StringVar(&injIndex, "inject-index", "", "1-based position to insert a temporary request")
 	c.Flags().StringVar(&injName, "inject-name", "", "Name of the temporary request")
 	c.Flags().StringVar(&injMethod, "inject-method", "GET", "HTTP method for temporary request")
@@ -270,14 +260,21 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 	return c
 }
 
-// Helpers
-
-func printAndExport(allMetrics [][]runner.RequestMetric, elapsed time.Duration, exportPath string, collectionName string) {
+// printAndExport analyzes metrics, prints the report, saves to history, and
+// optionally writes raw JSON. plan is used to persist DAG topology when
+// the collection used a scenario graph.
+func printAndExport(
+	allMetrics [][]runner.RequestMetric,
+	elapsed time.Duration,
+	exportPath string,
+	collectionName string,
+	plan *planner.ExecutionPlan,
+) {
 	report := metrics.AnalyzeSharded(allMetrics, elapsed, 0)
 	metrics.PrintReport(report)
 
 	if db, err := history.Open(); err == nil {
-		if saveErr := db.SaveRun(collectionName, report); saveErr != nil {
+		if saveErr := db.SaveRunWithDAG(collectionName, report, plan, allMetrics); saveErr != nil {
 			color.Yellow("⚠ History save failed: %v\n", saveErr)
 		}
 		db.Close()
@@ -291,7 +288,6 @@ func printAndExport(allMetrics [][]runner.RequestMetric, elapsed time.Duration, 
 		}
 	}
 }
-
 
 func printPhase3Header(cfg runner.SchedulerConfig) {
 	fmt.Println()

@@ -11,7 +11,6 @@ import (
 	"reqx/internal/history"
 )
 
-
 // Start registers routes, opens the browser, and blocks serving.
 func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.port)
@@ -25,8 +24,9 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("/api/history", s.apiHistory)
-
 	mux.HandleFunc("/api/history/{id}", s.apiHistoryDetail)
+	mux.HandleFunc("/api/history/{id}/dag", s.apiHistoryDAG)
+
 
 	go openBrowser(url)
 	fmt.Printf("ReqX UI running at %s  (Ctrl+C to stop)\n", url)
@@ -45,6 +45,22 @@ func (s *Server) apiHistory(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(runs)
 }
+
+func (s *Server) apiHistoryDAG(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing run id", http.StatusBadRequest)
+		return
+	}
+	nodes, err := s.db.GetDAGNodes(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(nodes)
+}
+
 
 func (s *Server) apiHistoryDetail(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
