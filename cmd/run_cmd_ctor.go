@@ -21,12 +21,14 @@ import (
 	"reqx/internal/planner"
 	"reqx/internal/progress"
 	"reqx/internal/runner"
+	"reqx/internal/socketio_executor"
 	"reqx/internal/storage"
+	"reqx/internal/websocket_executor"
 )
 
 func NewRunCmd() *cobra.Command {
 	var envFilePath string
-	var noCookies, clearCookies, verbose, quiet bool
+	var noCookies, clearCookies, verbose, quiet, insecure bool
 	var requestFilters []string
 	var iterations, workers int
 	var exportPath string
@@ -80,6 +82,16 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 				iterations = 1
 			}
 
+			if insecure {
+				http_executor.SetInsecure(true)
+			}
+			
+			// Hack: Since the sockets don't take Contexts yet, we just globally set the shared dialers if flagged
+			if insecure {
+				socketio_executor.SetInsecure(true)
+				websocket_executor.SetInsecure(true)
+			}
+			
 			totalStartTime := time.Now()
 
 			defer func() {
@@ -263,6 +275,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 	c.Flags().IntVarP(&iterations, "iterations", "n", 1, "Number of times to run the collection")
 	c.Flags().IntVarP(&workers, "workers", "c", 1, "Number of parallel workers (virtual users)")
 	c.Flags().StringVarP(&envFilePath, "env", "e", "", "Path to the environment JSON file")
+	c.Flags().BoolVarP(&insecure, "insecure", "k", false, "Disable TLS certificate verification for testing")
 	c.Flags().BoolVar(&noCookies, "no-cookies", false, "Disable cookie persistence for this run")
 	c.Flags().BoolVar(&clearCookies, "clear-cookies", false, "Clear cookie jar before each request")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output (full headers + body)")

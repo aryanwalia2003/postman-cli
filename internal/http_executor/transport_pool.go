@@ -1,6 +1,7 @@
 package http_executor
 
 import (
+	"crypto/tls"
 	"net"
 	"net/http"
 	"time"
@@ -22,4 +23,14 @@ var globalTransport = &http.Transport{
 	IdleConnTimeout:       90 * time.Second,
 	TLSHandshakeTimeout:   10 * time.Second,
 	ExpectContinueTimeout: 1 * time.Second,
+}
+
+// SetInsecure allows bypassing TLS certificate verification on the global transport.
+// This is critical for CPU performance during massive local load tests where 
+// certificate validation x509 math dominates CPU cycles.
+func SetInsecure(insecure bool) {
+	if globalTransport.TLSClientConfig == nil {
+		globalTransport.TLSClientConfig = &tls.Config{}
+	}
+	globalTransport.TLSClientConfig.InsecureSkipVerify = insecure
 }

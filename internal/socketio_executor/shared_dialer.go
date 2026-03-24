@@ -24,3 +24,8 @@ var sharedDialer = &websocket.Dialer{
 	},
 	HandshakeTimeout: 60 * time.Second,
 }
+
+// SetInsecure allows bypassing TLS certificate verification on the shared dialer.
+func SetInsecure(insecure bool) {
+	sharedDialer.TLSClientConfig.InsecureSkipVerify = insecure
+}
