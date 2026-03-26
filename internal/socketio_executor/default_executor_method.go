@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -68,7 +67,7 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	defer conn.Close()
 
 	// 4. State Management for Listeners
-	var mu sync.Mutex    // Guards expectedListeners and listenTargets
+	var mu sync.Mutex      // Guards expectedListeners and listenTargets
 	var writeMu sync.Mutex // Guards conn.WriteMessage (gorilla forbids concurrent writers)
 	expectedListeners := 0
 	listenTargets := make(map[string]int)
@@ -87,26 +86,46 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	connected := make(chan struct{}) // To ensure we wait for '40' before emitting
 
 	// 5. Background Reader (Handles Protocol & Incoming Events)
+	//
+	// BYTE-FIRST ARCHITECTURE: ReadMessage returns []byte directly from the
+	// gorilla websocket layer. We now operate entirely on the raw []byte frame
+	// throughout the protocol dispatch, avoiding the string(message) conversion
+	// that previously allocated a new heap string for every single WebSocket
+	// frame — including the high-frequency Engine.IO ping (packet "2") frames
+	// that arrive every 25 seconds per connection.
+	//
+	// gjson.GetBytes operates directly on []byte without any intermediate
+	// string allocation, so event-name sniffing inside "42[...]" frames is
+	// also zero-copy with respect to string heap pressure.
 	go func() {
 		for {
-			_, message, err := conn.ReadMessage()
+			_, msgBytes, err := conn.ReadMessage()
 			if err != nil {
 				return
 			}
 
-			msgStr := string(message)
+			// Guard against empty frames.
+			if len(msgBytes) == 0 {
+				continue
+			}
 
-			if strings.HasPrefix(msgStr, "0") {
+			switch {
+			case msgBytes[0] == '0':
 				// Engine.IO Open -> Send Socket.IO Connect (40)
 				writeMu.Lock()
 				conn.WriteMessage(websocket.TextMessage, []byte("40"))
 				writeMu.Unlock()
-			} else if strings.HasPrefix(msgStr, "2") {
+
+			case msgBytes[0] == '2':
 				// Engine.IO Ping -> Reply with Pong (3)
+				// NOTE: We intentionally check '2' before '4' so that the ping
+				// byte (0x32 = '2') is caught before the "42" event prefix check
+				// below. Single-byte frames will never reach the '4' branch.
 				writeMu.Lock()
 				conn.WriteMessage(websocket.TextMessage, []byte("3"))
 				writeMu.Unlock()
-			} else if strings.HasPrefix(msgStr, "40") {
+
+			case len(msgBytes) >= 2 && msgBytes[0] == '4' && msgBytes[1] == '0':
 				// Socket.IO Connected
 				if !e.quiet {
 					fmt.Println("Connected successfully.")
@@ -119,48 +138,55 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 						readyChan <- nil
 					}
 				}
-			} else if strings.HasPrefix(msgStr, "42") {
-				// Incoming Event
-				dataStr := msgStr[2:]
-				
-				// Use gjson to sniff the event name without unmarshalling the entire array
-				res := gjson.Get(dataStr, "0")
-				if res.Exists() {
-					eventName := res.String()
-					mu.Lock()
-					isListening := false
 
-					for _, ev := range events {
-						if ev.Type == "listen" && ev.Name == eventName {
-							isListening = true
-							break
-						}
+			case len(msgBytes) >= 2 && msgBytes[0] == '4' && msgBytes[1] == '2':
+				// Incoming Socket.IO event frame: "42[<name>,<payload>]"
+				// Slice off the "42" prefix — gjson.GetBytes works on the
+				// raw JSON array bytes without allocating a string.
+				dataBytes := msgBytes[2:]
+
+				// Sniff the event name from array index 0, byte-native.
+				res := gjson.GetBytes(dataBytes, "0")
+				if !res.Exists() {
+					continue
+				}
+
+				eventName := res.String() // one string alloc per matched event — unavoidable for map lookup
+				mu.Lock()
+				isListening := false
+				for _, ev := range events {
+					if ev.Type == "listen" && ev.Name == eventName {
+						isListening = true
+						break
+					}
+				}
+
+				if isListening {
+					if !e.quiet {
+						// Extract payload as raw bytes from array index 1.
+						// gjson.GetBytes returns the raw JSON token; .Raw is
+						// still a string but this path is only active in non-quiet
+						// (interactive / debug) mode — not the load-test hot path.
+						payload := gjson.GetBytes(dataBytes, "1").Raw
+						fmt.Printf("\n[RECEIVED] Event: '%s' | Data: %v\n", eventName, payload)
 					}
 
-					if isListening {
-						if !e.quiet {
-							// Extract payload as raw string from the array's second element
-							payload := gjson.Get(dataStr, "1").Raw
-							fmt.Printf("\n[RECEIVED] Event: '%s' | Data: %v\n", eventName, payload)
-						}
-
-						// Only decrement and track target counts if we are in Synchronous mode
-						if stopChan == nil {
-							if needed := listenTargets[eventName]; needed > 0 {
-								listenTargets[eventName]--
-								expectedListeners--
-								if expectedListeners == 0 {
-									select {
-									case <-done:
-									default:
-										close(done)
-									}
+					// Only decrement and track target counts if we are in Synchronous mode.
+					if stopChan == nil {
+						if needed := listenTargets[eventName]; needed > 0 {
+							listenTargets[eventName]--
+							expectedListeners--
+							if expectedListeners == 0 {
+								select {
+								case <-done:
+								default:
+									close(done)
 								}
 							}
 						}
 					}
-					mu.Unlock()
 				}
+				mu.Unlock()
 			}
 		}
 	}()

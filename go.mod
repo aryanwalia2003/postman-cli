@@ -1,6 +1,6 @@
 module reqx
 
-go 1.25.0
+go 1.25
 
 require (
 	github.com/dop251/goja v0.0.0-20260305124333-6a7976c22267

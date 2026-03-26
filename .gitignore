@@ -46,3 +46,8 @@ personas-guide.md
 *.csv
 
 *.prof
+*.pprof
+*.trace
+reqx
+reqx.test
+reqx-race

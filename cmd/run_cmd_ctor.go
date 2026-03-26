@@ -82,6 +82,10 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 				iterations = 1
 			}
 
+			if workers > 50 && !verbose {
+				quiet = true
+			}
+
 			if insecure {
 				http_executor.SetInsecure(true)
 			}
