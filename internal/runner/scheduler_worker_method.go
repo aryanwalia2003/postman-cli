@@ -9,11 +9,7 @@ import (
 	"reqx/internal/scripting"
 )
 
-// spawnWorker launches one self-driven virtual user (VU).
-// The worker sets up isolated state once (env clone, persona, cookie jar),
-// then loops executing the plan until ctx is cancelled.
-// Sockets are persistent across iterations — they are only closed when the
-// worker goroutine itself exits, eliminating per-iteration TLS handshakes.
+
 func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 	s.wg.Add(1)
 	go func() {
@@ -21,7 +17,7 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 
 		// Per-worker isolated state (persist across iterations).
 		rtCtx := NewRuntimeContext()
-		rtCtx.PersistConnections = true // sockets live for the worker lifetime
+		rtCtx.PersistConnections = true
 		if s.cfg.BaseEnv != nil {
 			rtCtx.SetEnvironment(s.cfg.BaseEnv.Clone())
 		}
@@ -40,6 +36,7 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 		if s.cfg.ClearCookies {
 			engine.SetClearCookiesPerRequest(true)
 		}
+		engine.ApplyRuntimeContext(rtCtx)
 
 		// Worker owns the AsyncStop lifecycle — close it only when the goroutine exits.
 		defer func() {
@@ -48,21 +45,33 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 		}()
 
 		for {
-			// Stage-controlled idling (no job queue contention).
-			for {
-				if ctx.Err() != nil {
-					return
-				}
-				if int64(id) <= s.desiredWorkers.Load() {
-					break
-				}
+			// ── Idle gate ──────────────────────────────────────────────────
+			if int64(id) > s.desiredWorkers.Load() {
+				// Quiesce background socket goroutines so they stop blocking
+				// OS threads while this worker is inactive.
+				rtCtx.PauseConnections()
 				s.activeWorkers.Store(s.desiredWorkers.Load())
-				select {
-				case <-ctx.Done():
-					return
-				case <-s.wake():
-				case <-time.After(100 * time.Millisecond):
+
+				for {
+					if ctx.Err() != nil {
+						return
+					}
+					if int64(id) <= s.desiredWorkers.Load() {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-s.wake():
+					case <-time.After(100 * time.Millisecond):
+					}
 				}
+
+				// Worker is active again — resume socket goroutines and
+				// re-sync the executor with the new channel reference so it
+				// picks up the freshly-closed active channel.
+				rtCtx.ResumeConnections()
+				engine.ApplyRuntimeContext(rtCtx)
 			}
 
 			s.activeWorkers.Store(s.desiredWorkers.Load())
@@ -84,7 +93,7 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 			}
 			s.results <- WorkerResult{IterationIndex: iter, Metrics: metrics, Err: err}
 
-			// Optional global-ish RPS control without a central job queue.
+			// Optional RPS control — per-worker pacing without a central job queue.
 			if s.cfg.RPS > 0 {
 				desired := s.desiredWorkers.Load()
 				if desired < 1 {
@@ -102,7 +111,6 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 		}
 	}()
 }
-
 
 func (s *Scheduler) wake() <-chan struct{} {
 	s.wakeMu.Lock()

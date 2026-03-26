@@ -42,11 +42,11 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	}
 
 	q := u.Query()
-	q.Set("EIO", "4") // FORCE SOCKET.IO v4
+	q.Set("EIO", "4")
 	q.Set("transport", "websocket")
 	u.RawQuery = q.Encode()
 
-	// 2. Prepare Custom Headers (e.g., Cookies, Authorization)
+	// 2. Prepare Custom Headers
 	reqHeaders := http.Header{}
 	for k, v := range headers {
 		reqHeaders.Add(k, v)
@@ -83,44 +83,60 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	}
 
 	done := make(chan struct{})
-	connected := make(chan struct{}) // To ensure we wait for '40' before emitting
+	connected := make(chan struct{})
 
-	// 5. Background Reader (Handles Protocol & Incoming Events)
+	// 5. Background Reader — Byte-First, Pause-Aware
 	//
-	// BYTE-FIRST ARCHITECTURE: ReadMessage returns []byte directly from the
-	// gorilla websocket layer. We now operate entirely on the raw []byte frame
-	// throughout the protocol dispatch, avoiding the string(message) conversion
-	// that previously allocated a new heap string for every single WebSocket
-	// frame — including the high-frequency Engine.IO ping (packet "2") frames
-	// that arrive every 25 seconds per connection.
+	// BYTE-FIRST: All protocol dispatch operates on the raw []byte frame from
+	// ReadMessage, avoiding the string(message) allocation on every frame.
+	// gjson.GetBytes operates directly on []byte without heap allocation.
 	//
-	// gjson.GetBytes operates directly on []byte without any intermediate
-	// string allocation, so event-name sniffing inside "42[...]" frames is
-	// also zero-copy with respect to string heap pressure.
+	// PAUSE-AWARE: When the scheduler worker goes idle (stage ramp-down),
+	// rtCtx.PauseConnections() replaces the active channel with an open
+	// channel. This goroutine detects the transition at the top of its loop
+	// and parks in a select{} instead of calling ReadMessage. This frees the
+	// OS thread that would otherwise be blocked on the network syscall,
+	// which was causing runtime.allocm at 14.56% in the March 26 profiling.
+	//
+	// When the worker becomes active again (rtCtx.ResumeConnections()), the
+	// channel is closed and the goroutine re-enters the read loop.
 	go func() {
 		for {
+			// ── Idle gate ──────────────────────────────────────────────────
+			// activeCh() is closed when the worker is active (fast path,
+			// the select returns immediately). When it is open (idle state),
+			// we block here without calling ReadMessage, releasing the OS thread.
+			//
+			// We also select on stopChan so that a worker shutdown during idle
+			// does not leave this goroutine stuck forever.
+			active := e.activeCh()
+			select {
+			case <-active:
+				// Worker is active — fall through to ReadMessage.
+			case <-stopChan:
+				// Shutdown signal received while idle. Exit cleanly.
+				return
+			}
+
+			// ── Read next frame ─────────────────────────────────────────────
 			_, msgBytes, err := conn.ReadMessage()
 			if err != nil {
 				return
 			}
-
-			// Guard against empty frames.
 			if len(msgBytes) == 0 {
 				continue
 			}
 
+			// ── Protocol dispatch (byte comparisons, zero allocation) ───────
 			switch {
 			case msgBytes[0] == '0':
-				// Engine.IO Open -> Send Socket.IO Connect (40)
+				// Engine.IO Open → send Socket.IO Connect (40)
 				writeMu.Lock()
 				conn.WriteMessage(websocket.TextMessage, []byte("40"))
 				writeMu.Unlock()
 
 			case msgBytes[0] == '2':
-				// Engine.IO Ping -> Reply with Pong (3)
-				// NOTE: We intentionally check '2' before '4' so that the ping
-				// byte (0x32 = '2') is caught before the "42" event prefix check
-				// below. Single-byte frames will never reach the '4' branch.
+				// Engine.IO Ping → reply Pong (3)
 				writeMu.Lock()
 				conn.WriteMessage(websocket.TextMessage, []byte("3"))
 				writeMu.Unlock()
@@ -133,25 +149,22 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 				select {
 				case <-connected:
 				default:
-					close(connected) // Signal that it's safe to emit
+					close(connected)
 					if readyChan != nil {
 						readyChan <- nil
 					}
 				}
 
 			case len(msgBytes) >= 2 && msgBytes[0] == '4' && msgBytes[1] == '2':
-				// Incoming Socket.IO event frame: "42[<name>,<payload>]"
-				// Slice off the "42" prefix — gjson.GetBytes works on the
-				// raw JSON array bytes without allocating a string.
-				dataBytes := msgBytes[2:]
+				// Incoming Socket.IO event: "42[<name>,<payload>]"
+				dataBytes := msgBytes[2:] // reslice — no copy
 
-				// Sniff the event name from array index 0, byte-native.
-				res := gjson.GetBytes(dataBytes, "0")
+				res := gjson.GetBytes(dataBytes, "0") // zero-alloc byte scan
 				if !res.Exists() {
 					continue
 				}
 
-				eventName := res.String() // one string alloc per matched event — unavoidable for map lookup
+				eventName := res.String() // one alloc per matched event only
 				mu.Lock()
 				isListening := false
 				for _, ev := range events {
@@ -163,15 +176,10 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 
 				if isListening {
 					if !e.quiet {
-						// Extract payload as raw bytes from array index 1.
-						// gjson.GetBytes returns the raw JSON token; .Raw is
-						// still a string but this path is only active in non-quiet
-						// (interactive / debug) mode — not the load-test hot path.
 						payload := gjson.GetBytes(dataBytes, "1").Raw
 						fmt.Printf("\n[RECEIVED] Event: '%s' | Data: %v\n", eventName, payload)
 					}
 
-					// Only decrement and track target counts if we are in Synchronous mode.
 					if stopChan == nil {
 						if needed := listenTargets[eventName]; needed > 0 {
 							listenTargets[eventName]--
@@ -215,11 +223,8 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 			if ev.Payload == "" {
 				finalMessage = "42[" + string(nameBytes) + "]"
 			} else if gjson.Valid(ev.Payload) {
-				// If the payload is perfectly valid JSON (object, array, number, quoted string, boolean, null),
-				// embed it directly.
 				finalMessage = "42[" + string(nameBytes) + "," + ev.Payload + "]"
 			} else {
-				// Otherwise, it was just unquoted text; JSON encode it as a simple string.
 				payloadBytes, _ := json.Marshal(ev.Payload)
 				finalMessage = "42[" + string(nameBytes) + "," + string(payloadBytes) + "]"
 			}
@@ -227,13 +232,11 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 			writeMu.Lock()
 			conn.WriteMessage(websocket.TextMessage, []byte(finalMessage))
 			writeMu.Unlock()
-			time.Sleep(10 * time.Millisecond) // Slight delay between emits to preserve ordering without hanging VUs
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 
-	// ========================================================
 	// 7. WAIT LOGIC (Async vs Sync)
-	// ========================================================
 
 	// ASYNC MODE: Wait indefinitely until Runner sends stop signal
 	if stopChan != nil {
@@ -267,7 +270,6 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 			}
 		}
 	} else {
-		// Just wait a tiny bit to ensure final emits go out before closing the conn
 		time.Sleep(1 * time.Second)
 	}
 

@@ -52,3 +52,13 @@ func (cr *CollectionRunner) SetVerbose(v bool) {
 	}
 }
 
+// ApplyRuntimeContext wires the RuntimeContext's pause channel into the
+// Socket.IO executor. This must be called after NewCollectionRunner and
+// before Run() in any context where idle-worker socket quiescing is desired
+// (i.e. Scheduler VU mode).
+//
+// In WorkerPool mode or single-run mode, this is never called and the
+// executor retains its default always-active behaviour.
+func (cr *CollectionRunner) ApplyRuntimeContext(ctx *RuntimeContext) {
+	cr.sioExecutor.SetPauseCh(ctx.ActiveCh())
+}

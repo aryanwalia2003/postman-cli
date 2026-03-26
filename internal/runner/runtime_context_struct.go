@@ -23,19 +23,10 @@ type RuntimeContext struct {
 	// this worker, so each URL is dialled only once across all iterations.
 	connectedURLs map[string]struct{}
 	connMu        sync.Mutex
+	
+	// pauseCh is replaced with a new open channel when the worker goes idle
+	// and closed when the worker becomes active again. Background socket
+	// operations block on pauseCh until it is reopened.
+	pauseCh chan struct{}
+	pauseMu sync.RWMutex
 }
-
-//this struct looks like 
-// {
-// 	"globalVariables": {
-// 		"key": "value"
-				// 	},
-// 	"environment": {
-// 		"name": "dev",
-// 		"variables": {
-// 			"key": "value"
-// 		}
-// 	}
-// }
-
-//this struct is used 

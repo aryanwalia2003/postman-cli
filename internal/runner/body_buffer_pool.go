@@ -9,8 +9,13 @@ import (
 // bodies. This eliminates the repeated heap allocations that io.ReadAll
 // performs when it grows its internal slice, significantly reducing GC
 // pressure during high-throughput load tests.
+
+const initialBufferSize = 8 * 1024
+
+const maxPooledBuffCap = 1024*1024
+
 var bodyBufPool = sync.Pool{
-	New: func() any { return new(bytes.Buffer) },
+	New: func() any { return bytes.NewBuffer(make([]byte, 0, initialBufferSize)) },
 }
 
 // acquireBodyBuf returns a zeroed buffer from the pool.
@@ -22,7 +27,7 @@ func acquireBodyBuf() *bytes.Buffer {
 
 // releaseBodyBuf resets and returns buf to the pool.
 func releaseBodyBuf(buf *bytes.Buffer) {
-	if buf.Cap() > 1024*1024 {
+	if buf.Cap() > maxPooledBuffCap {
 		return
 	}
 	
